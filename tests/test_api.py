@@ -15,6 +15,7 @@ def settings(tmp_path: Path) -> Settings:
         api_keys={"night-agent": "test-secret"},
         telegram_bot_token="",
         telegram_allowed_user_ids=frozenset({123}),
+        telegram_vacancy_user_ids=frozenset(),
         telegram_discovery_mode=False,
         timezone="Europe/Moscow",
         log_level="INFO",

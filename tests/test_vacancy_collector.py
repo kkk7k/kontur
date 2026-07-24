@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 
 from kontur.db import Database
+from kontur.models import EventCreate
 from kontur.service import KonturService
 from kontur.vacancies import HHSource, qualifies
 from kontur.vacancy_collector import VacancyCollector
@@ -96,3 +97,56 @@ def test_direct_ingest_notifies_first_item_and_accepts_long_external_id(
     with database.connection() as connection:
         delivery = connection.execute("SELECT * FROM deliveries").fetchone()
     assert delivery is not None
+
+
+def test_vacancy_is_delivered_to_owner_and_vacancy_only_user(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "kontur.sqlite")
+    database.initialize()
+    service = KonturService(
+        database,
+        frozenset({42}),
+        vacancy_recipients=frozenset({84}),
+    )
+    item = HHSource._parse(hh_item("shared"))
+    assert item is not None
+
+    assert VacancyCollector(database, service).ingest(item) is True
+
+    with database.connection() as connection:
+        recipients = {
+            row["recipient"]
+            for row in connection.execute("SELECT recipient FROM deliveries").fetchall()
+        }
+    assert recipients == {"42", "84"}
+
+
+def test_non_vacancy_event_is_not_delivered_to_vacancy_only_user(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "kontur.sqlite")
+    database.initialize()
+    service = KonturService(
+        database,
+        frozenset({42}),
+        vacancy_recipients=frozenset({84}),
+    )
+    service.register_event(
+        EventCreate(
+            id="evt_private_system",
+            occurred_at=datetime(2026, 7, 24, 12, tzinfo=UTC),
+            producer="kontur-watchdog",
+            type="automation_failed",
+            severity="error",
+            title="Private failure",
+            deduplication_key="private:failure",
+        )
+    )
+
+    with database.connection() as connection:
+        recipients = {
+            row["recipient"]
+            for row in connection.execute("SELECT recipient FROM deliveries").fetchall()
+        }
+    assert recipients == {"42"}

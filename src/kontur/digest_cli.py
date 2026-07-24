@@ -13,6 +13,7 @@ def main() -> int:
         database,
         settings.telegram_allowed_user_ids,
         timezone=settings.timezone,
+        vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
     event, created = service.create_daily_digest(producer="kontur-cli")
     if event is None:

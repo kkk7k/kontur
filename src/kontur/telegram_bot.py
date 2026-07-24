@@ -20,21 +20,33 @@ LOGGER = logging.getLogger(__name__)
 
 def create_router(
     service: KonturService,
-    allowed_users: frozenset[int],
+    owner_users: frozenset[int],
+    vacancy_users: frozenset[int] = frozenset(),
     *,
     discovery_mode: bool = False,
 ) -> Router:
     router = Router()
 
-    def authorized(user_id: int | None) -> bool:
-        return user_id is not None and user_id in allowed_users
+    def is_owner(user_id: int | None) -> bool:
+        return user_id is not None and user_id in owner_users
+
+    def is_vacancy_user(user_id: int | None) -> bool:
+        return user_id is not None and user_id in vacancy_users
+
+    @router.message(Command("whoami"))
+    async def whoami(message: Message) -> None:
+        if message.from_user:
+            await message.answer(
+                f"Ваш Telegram user ID: <code>{message.from_user.id}</code>",
+                parse_mode=ParseMode.HTML,
+            )
 
     @router.message(F.text, ~F.text.startswith("/"))
     async def discover_user(message: Message) -> None:
         if not discovery_mode or not message.from_user:
             return
         user_id = message.from_user.id
-        if authorized(user_id):
+        if is_owner(user_id) or is_vacancy_user(user_id):
             await message.answer("Вы уже добавлены в allowlist.")
             return
         LOGGER.warning("telegram discovery user_id=%s", user_id)
@@ -47,7 +59,16 @@ def create_router(
 
     @router.message(Command("start"))
     async def start(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        user_id = message.from_user.id if message.from_user else None
+        if is_vacancy_user(user_id) and not is_owner(user_id):
+            await message.answer(
+                "Контур вакансий подключён.\n\n"
+                "Сюда будут приходить только новые подходящие вакансии.\n"
+                "/whoami — показать Telegram ID\n"
+                "/help — справка"
+            )
+            return
+        if not is_owner(user_id):
             LOGGER.warning("telegram access denied")
             return
         await message.answer(
@@ -59,12 +80,20 @@ def create_router(
             "/agents — реестр агентов\n"
             "/automations — автоматизации и расписания\n"
             "/status — состояние системы\n"
+            "/whoami — показать Telegram ID\n"
             "/help — все команды"
         )
 
     @router.message(Command("help"))
     async def help_command(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        user_id = message.from_user.id if message.from_user else None
+        if is_vacancy_user(user_id) and not is_owner(user_id):
+            await message.answer(
+                "Вам будут приходить только новые подходящие вакансии.\n"
+                "/whoami — показать Telegram ID"
+            )
+            return
+        if not is_owner(user_id):
             return
         await message.answer(
             "/today — события за текущий список\n"
@@ -74,11 +103,12 @@ def create_router(
             "/digest — создать итог за текущий день\n"
             "/agents — агенты и последние запуски\n"
             "/automations — состояние и расписания\n"
+            "/whoami — показать Telegram ID\n"
             "/status — здоровье Контур Core"
         )
 
     async def send_events(message: Message, *, event_type: str | None = None) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         events = service.events(event_type=event_type, limit=10).items
         if not events:
@@ -97,7 +127,7 @@ def create_router(
 
     @router.message(Command("errors"))
     async def errors(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         events = [
             event
@@ -112,7 +142,7 @@ def create_router(
 
     @router.message(Command("inbox"))
     async def inbox(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         events = [
             event
@@ -134,7 +164,7 @@ def create_router(
 
     @router.message(Command("status"))
     async def status_command(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         state = service.status()
         await message.answer(
@@ -151,7 +181,7 @@ def create_router(
 
     @router.message(Command("agents"))
     async def agents_command(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         lines = ["<b>Агенты</b>"]
         for agent in service.agents():
@@ -170,7 +200,7 @@ def create_router(
 
     @router.message(Command("automations"))
     async def automations_command(message: Message) -> None:
-        if not authorized(message.from_user.id if message.from_user else None):
+        if not is_owner(message.from_user.id if message.from_user else None):
             return
         lines = ["<b>Автоматизации</b>"]
         for automation in service.automations():
@@ -193,7 +223,7 @@ def create_router(
     @router.message(Command("digest"))
     async def digest_command(message: Message) -> None:
         user_id = message.from_user.id if message.from_user else None
-        if not authorized(user_id):
+        if not is_owner(user_id):
             return
         event, created = service.create_daily_digest(producer=f"telegram-{user_id}")
         if event is None:
@@ -207,10 +237,16 @@ def create_router(
     @router.callback_query(F.data.startswith("resolve:"))
     async def resolve_callback(callback: CallbackQuery) -> None:
         user_id = callback.from_user.id
-        if not authorized(user_id):
+        event_id = callback.data.split(":", 1)[1] if callback.data else ""
+        current_event = service.event(event_id)
+        can_resolve = is_owner(user_id) or (
+            is_vacancy_user(user_id)
+            and current_event is not None
+            and current_event.type == "vacancy_found"
+        )
+        if not can_resolve:
             await callback.answer("Нет доступа", show_alert=True)
             return
-        event_id = callback.data.split(":", 1)[1] if callback.data else ""
         try:
             event = service.transition(event_id, EventStatus.RESOLVED, actor_id=str(user_id))
         except ValueError:
@@ -229,9 +265,13 @@ async def run() -> None:
     settings = Settings.from_env()
     if not settings.telegram_bot_token:
         raise RuntimeError("KONTUR_TELEGRAM_BOT_TOKEN is required")
-    if not settings.telegram_allowed_user_ids and not settings.telegram_discovery_mode:
+    if (
+        not settings.telegram_allowed_user_ids
+        and not settings.telegram_vacancy_user_ids
+        and not settings.telegram_discovery_mode
+    ):
         raise RuntimeError(
-            "KONTUR_TELEGRAM_ALLOWED_USER_IDS is required unless discovery mode is enabled"
+            "At least one Telegram allowlist is required unless discovery mode is enabled"
         )
     database = Database(settings.database_path)
     database.initialize()
@@ -240,6 +280,7 @@ async def run() -> None:
         database,
         settings.telegram_allowed_user_ids,
         timezone=settings.timezone,
+        vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
     bot = Bot(settings.telegram_bot_token)
     dispatcher = Dispatcher()
@@ -247,6 +288,7 @@ async def run() -> None:
         create_router(
             service,
             settings.telegram_allowed_user_ids,
+            settings.telegram_vacancy_user_ids,
             discovery_mode=settings.telegram_discovery_mode,
         )
     )

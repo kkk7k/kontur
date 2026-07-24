@@ -63,7 +63,9 @@ class VacancyCollector:
             payload=item.model_dump(mode="json"),
             correlation_id=f"{item.source}:{item.external_id}"[:100],
         )
-        recipients = self.service.telegram_recipients if notify else frozenset()
-        saved, event_created = self.database.create_event(event, recipients)
+        if notify:
+            saved, event_created = self.service.register_event(event)
+        else:
+            saved, event_created = self.database.create_event(event, frozenset())
         stored = self.database.create_vacancy_item(vacancy=item, event_id=saved.id)
         return event_created and stored

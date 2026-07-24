@@ -23,9 +23,13 @@ class KonturService:
     database: Database
     telegram_recipients: frozenset[int]
     timezone: str = "Europe/Moscow"
+    vacancy_recipients: frozenset[int] = frozenset()
 
     def register_event(self, event: EventCreate) -> tuple[EventView, bool]:
-        return self.database.create_event(event, self.telegram_recipients)
+        recipients = self.telegram_recipients
+        if event.type == "vacancy_found":
+            recipients |= self.vacancy_recipients
+        return self.database.create_event(event, recipients)
 
     def event(self, event_id: str) -> EventView | None:
         return self.database.get_event(event_id)

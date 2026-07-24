@@ -36,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database,
         settings.telegram_allowed_user_ids,
         timezone=settings.timezone,
+        vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
 
     @asynccontextmanager

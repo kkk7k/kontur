@@ -261,6 +261,7 @@ async def run() -> None:
         database,
         settings.telegram_allowed_user_ids,
         timezone=settings.timezone,
+        vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
     watchdog = Watchdog(
         Registry(database, settings.timezone),

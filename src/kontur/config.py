@@ -55,6 +55,7 @@ class Settings:
     api_keys: dict[str, str]
     telegram_bot_token: str
     telegram_allowed_user_ids: frozenset[int]
+    telegram_vacancy_user_ids: frozenset[int]
     telegram_discovery_mode: bool
     timezone: str
     log_level: str
@@ -84,6 +85,9 @@ class Settings:
             telegram_bot_token=os.getenv("KONTUR_TELEGRAM_BOT_TOKEN", ""),
             telegram_allowed_user_ids=_parse_int_set(
                 os.getenv("KONTUR_TELEGRAM_ALLOWED_USER_IDS", "")
+            ),
+            telegram_vacancy_user_ids=_parse_int_set(
+                os.getenv("KONTUR_TELEGRAM_VACANCY_USER_IDS", "")
             ),
             telegram_discovery_mode=_parse_bool(
                 os.getenv("KONTUR_TELEGRAM_DISCOVERY_MODE", "false")
