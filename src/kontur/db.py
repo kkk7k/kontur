@@ -7,7 +7,13 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from kontur.models import EventCreate, EventStatus, EventView, VacancyItem
+from kontur.models import (
+    EventCreate,
+    EventStatus,
+    EventView,
+    ReputationSignalCreate,
+    VacancyItem,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -127,6 +133,27 @@ CREATE TABLE IF NOT EXISTS watchdog_incidents (
     opened_at TEXT NOT NULL,
     resolved_at TEXT,
     event_id TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reputation_checkpoints (
+    repository TEXT PRIMARY KEY,
+    commit_sha TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reputation_signals (
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    audience TEXT,
+    observed_at TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    frequency INTEGER NOT NULL,
+    received_at TEXT NOT NULL,
+    processed_at TEXT,
+    PRIMARY KEY (source, external_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at DESC);
@@ -270,6 +297,12 @@ class Database:
             ("career", "Career Agent", "Карьера и вакансии", "active"),
             ("travel", "Travel Deal Agent", "Выгодные поездки", "planned"),
             ("renovation", "Renovation Price Agent", "Закупки для ремонта", "planned"),
+            (
+                "reputation",
+                "Reputation Research Agent",
+                "Доказательные темы и исследование спроса",
+                "active",
+            ),
         )
         for values in agents:
             connection.execute(
@@ -308,6 +341,15 @@ class Database:
                 "hh-vacancy-monitor", "HH vacancy monitor", "career", "workflow",
                 "every:30m", "paused", None,
             ),
+            (
+                "reputation-weekly",
+                "Reputation weekly research",
+                "reputation",
+                "workflow",
+                "weekly@sun:19:00",
+                "active",
+                None,
+            ),
         )
         for automation in automations:
             connection.execute(
@@ -326,7 +368,11 @@ class Database:
         event: EventCreate,
     ) -> None:
         occurred = event.occurred_at.isoformat()
-        success = event.type in {"run_completed", "daily_digest_ready"}
+        success = event.type in {
+            "run_completed",
+            "daily_digest_ready",
+            "reputation_weekly_digest",
+        }
         failure = event.type in {"run_failed"}
         agent_id = "night-agent" if event.producer == "night-agent" else event.agent
         if agent_id:
@@ -372,6 +418,16 @@ class Database:
             ("agents", "career", "agent = 'career'"),
             ("automations", "night-agent-nightly", "producer = 'night-agent'"),
             ("automations", "n8n-daily-digest", "type = 'daily_digest_ready'"),
+            (
+                "agents",
+                "reputation",
+                "type = 'reputation_weekly_digest'",
+            ),
+            (
+                "automations",
+                "reputation-weekly",
+                "type = 'reputation_weekly_digest'",
+            ),
         )
         for table, entity_id, condition in mappings:
             row = connection.execute(
@@ -468,6 +524,74 @@ class Database:
                 (source,),
             ).fetchone()
             return int(row["count"])
+
+    def reputation_checkpoint(self, repository: str) -> str | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT commit_sha FROM reputation_checkpoints WHERE repository = ?",
+                (repository,),
+            ).fetchone()
+        return str(row["commit_sha"]) if row else None
+
+    def save_reputation_checkpoint(self, repository: str, commit_sha: str) -> None:
+        now = utc_now().isoformat()
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO reputation_checkpoints (repository, commit_sha, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(repository) DO UPDATE SET
+                    commit_sha = excluded.commit_sha,
+                    updated_at = excluded.updated_at
+                """,
+                (repository, commit_sha, now),
+            )
+
+    def create_reputation_signal(self, signal: ReputationSignalCreate) -> bool:
+        now = utc_now().isoformat()
+        with self.connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO reputation_signals (
+                    source, external_id, url, title, summary, audience,
+                    observed_at, tags_json, frequency, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal.source,
+                    signal.external_id,
+                    signal.url,
+                    signal.title,
+                    signal.summary,
+                    signal.audience,
+                    signal.observed_at.isoformat(),
+                    json.dumps(signal.tags, ensure_ascii=False),
+                    signal.frequency,
+                    now,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def pending_reputation_signals(self) -> list[sqlite3.Row]:
+        with self.connection() as connection:
+            return connection.execute(
+                """
+                SELECT * FROM reputation_signals
+                WHERE processed_at IS NULL
+                ORDER BY frequency DESC, observed_at DESC
+                LIMIT 500
+                """
+            ).fetchall()
+
+    def mark_reputation_signals_processed(self) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                """
+                UPDATE reputation_signals SET processed_at = ?
+                WHERE processed_at IS NULL
+                """,
+                (utc_now().isoformat(),),
+            )
 
     def get_event(self, event_id: str) -> EventView | None:
         with self.connection() as connection:

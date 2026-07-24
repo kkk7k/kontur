@@ -33,6 +33,8 @@ kontur-configure-n8n
   агрегированный итог; при отсутствии событий Core возвращает `204`.
 - `kontur_hh_vacancies.json` — каждые 30 минут просит Core найти новые
   HH-вакансии и отправить только ранее не встречавшиеся.
+- `kontur_reputation_weekly.json` — по воскресеньям в 19:00 запускает поиск
+  доказательных тем по Git history и накопленным сигналам аудитории.
 - `kontur_status_watchdog.json` — проверяет состояние Core каждые 15 минут.
 
 JSON-файлы не содержат credentials. После импорта проверить URL и переменные
@@ -55,6 +57,13 @@ JSON-файлы не содержат credentials. После импорта п�
 - workflow ID: `xBPLzZI09vCOZU2f`;
 - расписание подготовлено на каждые 30 минут;
 - workflow оставлен inactive до добавления OAuth credentials приложения HH.
+
+`kontur_reputation_weekly` импортирован и активирован:
+
+- workflow ID: `QxT3VV4B28SL6oIy`;
+- расписание: воскресенье 19:00 `Europe/Moscow`;
+- первый historical scan выполнен 2026-07-24;
+- интернет-коллекторы пока не подключены, работает API signal intake.
 
 Нельзя публиковать webhook в интернет без TLS, дополнительной авторизации и
 ограничения доступа.

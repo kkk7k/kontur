@@ -30,6 +30,20 @@ HH / Telegram / Habr / company sites -> n8n -> Kontur -> dedup -> Telegram
 Остальные источники могут сразу передавать нормализованные вакансии в
 `POST /api/v1/vacancies`.
 
+Reputation Research Agent:
+
+```text
+committed Git history ─┐
+                       ├─> topic candidates -> Kontur -> Telegram
+audience signals ──────┘
+```
+
+Первый запуск анализирует всю committed историю разрешённых репозиториев,
+следующие — только commits после сохранённого SHA. Содержимое файлов, diff и
+untracked-файлы не читаются. Внешние исследовательские workflow передают
+обезличенные вопросы аудитории через `POST /api/v1/reputation/signals`.
+Агент предлагает не больше трёх тем и не создаёт публикации автоматически.
+
 Контур хранит события независимо от Telegram. Повторная регистрация события
 идемпотентна, а неудачная доставка остаётся в outbox и повторяется.
 
@@ -139,6 +153,12 @@ curl -X POST http://127.0.0.1:8090/api/v1/vacancies \
 ```bash
 curl http://127.0.0.1:8090/health/live
 pytest
+```
+
+Ручной запуск Reputation Research Agent:
+
+```bash
+kontur-reputation
 ```
 
 ## Регистрация события

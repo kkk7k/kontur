@@ -25,6 +25,29 @@ def _next_run(schedule: str | None, timezone: str, now: datetime) -> datetime | 
     if schedule.startswith("every:") and schedule.endswith("m"):
         minutes = int(schedule.removeprefix("every:").removesuffix("m"))
         return now + timedelta(minutes=minutes)
+    if schedule.startswith("weekly@"):
+        day_text, time_text = schedule.removeprefix("weekly@").split(":", 1)
+        hour_text, minute_text = time_text.split(":")
+        weekdays = {
+            "mon": 0,
+            "tue": 1,
+            "wed": 2,
+            "thu": 3,
+            "fri": 4,
+            "sat": 5,
+            "sun": 6,
+        }
+        local_now = now.astimezone(ZoneInfo(timezone))
+        days_ahead = (weekdays[day_text] - local_now.weekday()) % 7
+        result = (local_now + timedelta(days=days_ahead)).replace(
+            hour=int(hour_text),
+            minute=int(minute_text),
+            second=0,
+            microsecond=0,
+        )
+        if result <= local_now:
+            result += timedelta(days=7)
+        return result
     return None
 
 

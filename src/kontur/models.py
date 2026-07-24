@@ -151,3 +151,45 @@ class AutomationView(BaseModel):
     last_heartbeat_at: datetime | None = None
     next_run_at: datetime | None = None
     stale_after_seconds: int | None = None
+
+
+class ReputationSignalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1, max_length=80)
+    external_id: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=8, max_length=2000)
+    title: str = Field(min_length=3, max_length=300)
+    summary: str = Field(default="", max_length=4000)
+    audience: str | None = Field(default=None, max_length=200)
+    observed_at: datetime
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    frequency: int = Field(default=1, ge=1, le=10_000)
+
+    @field_validator("observed_at")
+    @classmethod
+    def observed_at_must_have_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include timezone")
+        return value
+
+
+class ReputationTopic(BaseModel):
+    key: str
+    title: str
+    angle: str
+    source_type: str
+    evidence_count: int
+    repositories: list[str] = Field(default_factory=list)
+    signal_count: int = 0
+    score: int
+    disclosure_risk: int
+    research_required: bool = True
+
+
+class ReputationRunResult(BaseModel):
+    scanned_commits: int
+    accepted_signals: int
+    topics: list[ReputationTopic]
+    event_id: str | None = None
+    created: bool = False

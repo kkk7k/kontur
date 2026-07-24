@@ -27,6 +27,7 @@ def test_registry_is_seeded_and_daily_next_run_is_calculated(tmp_path: Path) -> 
         "career",
         "travel",
         "renovation",
+        "reputation",
     }
     digest = next(
         item for item in registry.automations(now) if item.id == "n8n-daily-digest"

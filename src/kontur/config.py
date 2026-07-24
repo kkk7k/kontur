@@ -46,6 +46,10 @@ def _parse_bool(raw: str) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_csv(raw: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     environment: str
@@ -70,6 +74,8 @@ class Settings:
     hh_client_id: str = ""
     hh_client_secret: str = ""
     n8n_url: str = "http://127.0.0.1:5678"
+    reputation_repositories: tuple[Path, ...] = ()
+    reputation_git_authors: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -120,4 +126,19 @@ class Settings:
             hh_client_id=os.getenv("KONTUR_HH_CLIENT_ID", ""),
             hh_client_secret=os.getenv("KONTUR_HH_CLIENT_SECRET", ""),
             n8n_url=os.getenv("KONTUR_N8N_URL", "http://127.0.0.1:5678"),
+            reputation_repositories=_parse_paths(
+                os.getenv(
+                    "KONTUR_REPUTATION_REPOSITORIES",
+                    ",".join(
+                        (
+                            "/Users/kkk7k/DEV/WB/storno-compensation",
+                            "/Users/kkk7k/DEV/WB/compensation",
+                            "/Users/kkk7k/DEV/WB/lead-compensation",
+                        )
+                    ),
+                )
+            ),
+            reputation_git_authors=_parse_csv(
+                os.getenv("KONTUR_REPUTATION_GIT_AUTHORS", "")
+            ),
         )

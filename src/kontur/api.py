@@ -17,11 +17,14 @@ from kontur.models import (
     EventList,
     EventStatus,
     EventView,
+    ReputationRunResult,
+    ReputationSignalCreate,
     StatusView,
     VacancyCollectionResult,
     VacancyItem,
 )
 from kontur.registry import Registry
+from kontur.reputation import ReputationResearchAgent
 from kontur.service import KonturService
 from kontur.vacancies import HHSource
 from kontur.vacancy_collector import VacancyCollector
@@ -177,6 +180,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status.HTTP_201_CREATED if created else status.HTTP_200_OK
         )
         return {"created": created}
+
+    @app.post("/api/v1/reputation/signals", status_code=201)
+    def ingest_reputation_signal(
+        signal: ReputationSignalCreate,
+        response: Response,
+        _: str = Depends(authenticate_producer),
+    ) -> dict[str, bool]:
+        created = database.create_reputation_signal(signal)
+        response.status_code = (
+            status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+        return {"created": created}
+
+    @app.post(
+        "/api/v1/reputation/run",
+        response_model=ReputationRunResult,
+    )
+    def run_reputation_agent(
+        _: str = Depends(authenticate_producer),
+        service: KonturService = Depends(get_service),
+    ) -> ReputationRunResult:
+        return ReputationResearchAgent(
+            database=database,
+            service=service,
+            repositories=settings.reputation_repositories,
+            timezone=settings.timezone,
+            author_filters=settings.reputation_git_authors,
+        ).run()
 
     def transition_event(
         event_id: str,

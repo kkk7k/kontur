@@ -59,8 +59,8 @@ def test_api_auth_and_idempotency(tmp_path: Path) -> None:
         assert second.status_code == 200
         assert second.json()["id"] == first.json()["id"]
         assert client.get("/api/v1/status").json()["pending_inbox"] == 1
-        assert len(client.get("/api/v1/agents").json()) == 4
-        assert len(client.get("/api/v1/automations").json()) == 7
+        assert len(client.get("/api/v1/agents").json()) == 5
+        assert len(client.get("/api/v1/automations").json()) == 8
 
 
 def test_api_rejects_producer_mismatch(tmp_path: Path) -> None:
@@ -89,6 +89,35 @@ def test_generic_vacancy_ingest_is_authenticated_and_idempotent(
         second = client.post("/api/v1/vacancies", json=vacancy, headers=headers())
 
     assert unauthorized.status_code == 422
+    assert first.status_code == 201
+    assert first.json() == {"created": True}
+    assert second.status_code == 200
+    assert second.json() == {"created": False}
+
+
+def test_reputation_signal_intake_is_idempotent(tmp_path: Path) -> None:
+    signal = {
+        "source": "forum",
+        "external_id": "question-42",
+        "url": "https://example.com/questions/42",
+        "title": "Kafka retry without duplicate processing",
+        "summary": "Repeated user question",
+        "observed_at": "2026-07-24T12:00:00+03:00",
+        "tags": ["kafka", "retry"],
+        "frequency": 3,
+    }
+    with TestClient(create_app(settings(tmp_path))) as client:
+        first = client.post(
+            "/api/v1/reputation/signals",
+            json=signal,
+            headers=headers(),
+        )
+        second = client.post(
+            "/api/v1/reputation/signals",
+            json=signal,
+            headers=headers(),
+        )
+
     assert first.status_code == 201
     assert first.json() == {"created": True}
     assert second.status_code == 200
