@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from kontur.db import Database
@@ -27,33 +28,7 @@ class VacancyCollector:
         items = source.fetch()
         created = 0
         for item in items:
-            event_id = f"evt_vacancy_{item.source}_{item.external_id}"
-            event = EventCreate(
-                id=event_id,
-                occurred_at=item.published_at,
-                producer=f"vacancy-{item.source}",
-                agent="career",
-                type="vacancy_found",
-                severity=Severity.INFO,
-                title=item.title,
-                summary=(
-                    f"{item.company or 'Компания не указана'}. "
-                    f"{item.experience_name or 'Опыт не указан'}. {_salary(item)}. "
-                    f"Фильтр: {', '.join(item.matched_by)}."
-                ),
-                requires_action=True,
-                recommended_action="Открыть вакансию",
-                deduplication_key=f"{item.source}:{item.external_id}",
-                source={"kind": "vacancy", "name": item.source, "uri": item.url},
-                payload=item.model_dump(mode="json"),
-                correlation_id=f"{item.source}:{item.external_id}",
-            )
-            if bootstrapped:
-                saved, event_created = self.database.create_event(event, frozenset())
-            else:
-                saved, event_created = self.service.register_event(event)
-            stored = self.database.create_vacancy_item(vacancy=item, event_id=saved.id)
-            if event_created and stored:
+            if self.ingest(item, notify=not bootstrapped):
                 created += 1
         return VacancyCollectionResult(
             source=source.name,
@@ -63,3 +38,32 @@ class VacancyCollector:
             duplicate=len(items) - created,
             bootstrapped=bootstrapped,
         )
+
+    def ingest(self, item: VacancyItem, *, notify: bool = True) -> bool:
+        digest = hashlib.sha256(
+            f"{item.source}:{item.external_id}".encode()
+        ).hexdigest()[:20]
+        event = EventCreate(
+            id=f"evt_vacancy_{digest}",
+            occurred_at=item.published_at,
+            producer=f"vacancy-{item.source}",
+            agent="career",
+            type="vacancy_found",
+            severity=Severity.INFO,
+            title=item.title,
+            summary=(
+                f"{item.company or 'Компания не указана'}. "
+                f"{item.experience_name or 'Опыт не указан'}. {_salary(item)}. "
+                f"Фильтр: {', '.join(item.matched_by) or 'внешний источник'}."
+            ),
+            requires_action=True,
+            recommended_action="Открыть вакансию",
+            deduplication_key=f"{item.source}:{item.external_id}",
+            source={"kind": "vacancy", "name": item.source, "uri": item.url},
+            payload=item.model_dump(mode="json"),
+            correlation_id=f"{item.source}:{item.external_id}"[:100],
+        )
+        recipients = self.service.telegram_recipients if notify else frozenset()
+        saved, event_created = self.database.create_event(event, recipients)
+        stored = self.database.create_vacancy_item(vacancy=item, event_id=saved.id)
+        return event_created and stored

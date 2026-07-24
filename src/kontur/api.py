@@ -16,6 +16,7 @@ from kontur.models import (
     EventView,
     StatusView,
     VacancyCollectionResult,
+    VacancyItem,
 )
 from kontur.service import KonturService
 from kontur.vacancies import HHSource
@@ -133,6 +134,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             client_secret=settings.hh_client_secret,
         )
         return VacancyCollector(database=database, service=service).run(source)
+
+    @app.post("/api/v1/vacancies", status_code=201)
+    def ingest_vacancy(
+        vacancy: VacancyItem,
+        response: Response,
+        _: str = Depends(authenticate_producer),
+        service: KonturService = Depends(get_service),
+    ) -> dict[str, bool]:
+        created = VacancyCollector(database=database, service=service).ingest(vacancy)
+        response.status_code = (
+            status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+        return {"created": created}
 
     def transition_event(
         event_id: str,

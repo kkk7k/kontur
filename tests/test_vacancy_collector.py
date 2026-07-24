@@ -81,3 +81,18 @@ def test_collector_creates_only_new_events(tmp_path: Path) -> None:
     events = service.events(event_type="vacancy_found")
     assert events.total == 1
     assert events.items[0].source.uri == "https://hh.ru/vacancy/123"
+
+
+def test_direct_ingest_notifies_first_item_and_accepts_long_external_id(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "kontur.sqlite")
+    database.initialize()
+    service = KonturService(database, frozenset({42}))
+    item = HHSource._parse(hh_item("channel/message/" + "x" * 100))
+    assert item is not None
+
+    assert VacancyCollector(database, service).ingest(item) is True
+    with database.connection() as connection:
+        delivery = connection.execute("SELECT * FROM deliveries").fetchone()
+    assert delivery is not None

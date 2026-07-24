@@ -66,3 +66,27 @@ def test_api_rejects_producer_mismatch(tmp_path: Path) -> None:
     with TestClient(create_app(settings(tmp_path))) as client:
         response = client.post("/api/v1/events", json=body, headers=headers())
     assert response.status_code == 403
+
+
+def test_generic_vacancy_ingest_is_authenticated_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    vacancy = {
+        "source": "telegram",
+        "external_id": "golang-jobs:42",
+        "title": "Senior Go Developer",
+        "url": "https://t.me/golang_jobs/42",
+        "company": "Example",
+        "published_at": "2026-07-24T12:00:00+03:00",
+        "matched_by": ["Senior в названии"],
+    }
+    with TestClient(create_app(settings(tmp_path))) as client:
+        unauthorized = client.post("/api/v1/vacancies", json=vacancy)
+        first = client.post("/api/v1/vacancies", json=vacancy, headers=headers())
+        second = client.post("/api/v1/vacancies", json=vacancy, headers=headers())
+
+    assert unauthorized.status_code == 422
+    assert first.status_code == 201
+    assert first.json() == {"created": True}
+    assert second.status_code == 200
+    assert second.json() == {"created": False}

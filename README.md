@@ -15,16 +15,20 @@ Night Agent -> Kontur API -> SQLite -> delivery worker -> Telegram
 Монитор вакансий:
 
 ```text
-n8n schedule -> HH API -> фильтр 3–6 лет / Senior -> dedup -> Telegram
+HH / Telegram / Habr / company sites -> n8n -> Kontur -> dedup -> Telegram
 ```
 
-Сейчас подключён официальный API HH. Вакансия считается подходящей для
+Вакансия считается подходящей для
 уведомления, если у неё указан опыт `3–6 лет` или в названии есть
 `Senior`, `Старший` либо `Ведущий`. Повторно одна и та же вакансия не
-отправляется. Параметры поиска задаются через `KONTUR_HH_*`.
-Для текущего API HH нужно зарегистрировать приложение и заполнить
-`KONTUR_HH_CLIENT_ID` и `KONTUR_HH_CLIENT_SECRET`; Контур получает application
-token по OAuth2 client credentials и не выводит его в логи.
+отправляется.
+
+Адаптер официального API HH готов, но его n8n workflow выключен: анонимный
+поиск из локального окружения получает `403`. Код сохранён для будущего
+подключения через OAuth-приложение или email сохранённого поиска HH.
+
+Остальные источники могут сразу передавать нормализованные вакансии в
+`POST /api/v1/vacancies`.
 
 Контур хранит события независимо от Telegram. Повторная регистрация события
 идемпотентна, а неудачная доставка остаётся в outbox и повторяется.
@@ -74,6 +78,24 @@ kontur-digest
 curl -X POST http://127.0.0.1:8090/api/v1/collectors/hh/run \
   -H 'X-Kontur-Producer: n8n' \
   -H 'X-Kontur-API-Key: change-me'
+```
+
+Регистрация вакансии из любого внешнего источника:
+
+```bash
+curl -X POST http://127.0.0.1:8090/api/v1/vacancies \
+  -H 'Content-Type: application/json' \
+  -H 'X-Kontur-Producer: n8n' \
+  -H 'X-Kontur-API-Key: change-me' \
+  -d '{
+    "source": "telegram",
+    "external_id": "channel-name:123",
+    "title": "Senior Go Developer",
+    "url": "https://t.me/channel-name/123",
+    "company": "Example",
+    "published_at": "2026-07-24T12:00:00+03:00",
+    "matched_by": ["Senior в названии"]
+  }'
 ```
 
 То же действие доступно владельцу через `/digest` в Telegram.
