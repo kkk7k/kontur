@@ -120,8 +120,13 @@ class Database:
         now_text = now.isoformat()
         with self.connection() as connection:
             existing = connection.execute(
-                "SELECT * FROM events WHERE producer = ? AND deduplication_key = ?",
-                (event.producer, event.deduplication_key),
+                """
+                SELECT * FROM events
+                WHERE id = ?
+                OR (producer = ? AND deduplication_key = ?)
+                LIMIT 1
+                """,
+                (event.id, event.producer, event.deduplication_key),
             ).fetchone()
             if existing:
                 return self._row_to_event(connection, existing), False

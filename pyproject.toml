@@ -30,6 +30,7 @@ kontur-worker = "kontur.worker:main"
 kontur-night-report = "kontur.night_agent_adapter:main"
 kontur-services = "kontur.service_manager:main"
 kontur-digest = "kontur.digest_cli:main"
+kontur-configure-n8n = "kontur.n8n_setup:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kontur"]

@@ -1,6 +1,18 @@
 {
+  "id": "0BzScgOaEFOuFZqn",
   "name": "kontur_daily_digest",
   "nodes": [
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ]
+    },
     {
       "parameters": {
         "rule": {
@@ -53,6 +65,17 @@
     }
   ],
   "connections": {
+    "Manual Test": {
+      "main": [
+        [
+          {
+            "node": "Create Kontur Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Every Day 08:30": {
       "main": [
         [

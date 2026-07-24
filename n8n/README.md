@@ -16,6 +16,15 @@ KONTUR_N8N_WEBHOOK_SECRET=change-me-too
 KONTUR_API_KEYS=night-agent:secret,n8n:change-me
 ```
 
+Автоматическая локальная настройка без вывода secret:
+
+```bash
+kontur-configure-n8n
+```
+
+Команда сохраняет существующие producer keys, добавляет или ротирует только
+ключ `n8n`, атомарно обновляет локальные `.env` и выставляет права `0600`.
+
 ## Workflow
 
 - `kontur_agent_webhook.json` — принимает уже сформированный контракт события,
@@ -33,9 +42,11 @@ JSON-файлы не содержат credentials. После импорта п�
 
 - URL: `http://localhost:5678`;
 - workflow ID: `0BzScgOaEFOuFZqn`;
-- состояние: inactive до настройки `KONTUR_API_URL` и
-  `KONTUR_N8N_API_KEY`;
-- расписание после активации: ежедневно в 08:30 `Europe/Moscow`.
+- состояние: active;
+- отдельный producer key настроен и хранится только в локальных `.env`;
+- расписание: ежедневно в 08:30 `Europe/Moscow`;
+- Manual Trigger оставлен для безопасной CLI-проверки после обновлений;
+- end-to-end CLI execution пройден 2026-07-24.
 
 Нельзя публиковать webhook в интернет без TLS, дополнительной авторизации и
 ограничения доступа.

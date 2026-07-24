@@ -51,6 +51,19 @@ def test_create_event_is_idempotent(database: Database) -> None:
         assert connection.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] == 1
 
 
+def test_event_id_is_idempotent_across_producers(database: Database) -> None:
+    first, first_created = database.create_event(make_event(), frozenset({123}))
+    second_event = make_event(
+        producer="n8n",
+        deduplication_key="n8n:different-key",
+    )
+    second, second_created = database.create_event(second_event, frozenset({123}))
+    assert first_created is True
+    assert second_created is False
+    assert second.id == first.id
+    assert second.producer == "night-agent"
+
+
 def test_info_without_action_is_digest_only(database: Database) -> None:
     event = make_event(severity="info", requires_action=False)
     database.create_event(event, frozenset({123}))
