@@ -1,0 +1,130 @@
+{
+  "name": "kontur_agent_webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kontur-agent-event",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Agent Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "kontur-agent-event"
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected = $env.KONTUR_N8N_WEBHOOK_SECRET;\nconst actual = $json.headers?.['x-kontur-webhook-secret'];\nif (!expected || actual !== expected) throw new Error('Unauthorized webhook');\nconst event = $json.body;\nfor (const field of ['id','occurred_at','producer','type','title','deduplication_key']) {\n  if (!event?.[field]) throw new Error(`Missing event field: ${field}`);\n}\nreturn [{ json: event }];"
+      },
+      "id": "validate",
+      "name": "Validate Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.KONTUR_API_URL + '/api/v1/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Kontur-Producer",
+              "value": "={{ $json.producer }}"
+            },
+            {
+              "name": "X-Kontur-API-Key",
+              "value": "={{ $env.KONTUR_N8N_API_KEY }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.deduplication_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "register",
+      "name": "Register in Kontur",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Agent Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Event": {
+      "main": [
+        [
+          {
+            "node": "Register in Kontur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register in Kontur": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kontur-agent-webhook-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

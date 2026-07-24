@@ -1,0 +1,39 @@
+{
+  "id": "evt_example_run_completed",
+  "schema_version": 1,
+  "occurred_at": "2026-07-24T03:12:00+03:00",
+  "producer": "night-agent",
+  "agent": "coding",
+  "run_id": "run_20260724_night_001",
+  "type": "run_completed",
+  "severity": "warning",
+  "title": "Ночной запуск завершён",
+  "summary": "Две задачи успешны, одна требует внимания",
+  "confidence": 1.0,
+  "requires_action": true,
+  "approval_required": false,
+  "recommended_action": "Проверить morning report",
+  "deduplication_key": "night-agent:2026-07-24:completed",
+  "source": {
+    "kind": "local_file",
+    "name": "morning-report",
+    "uri": "runs/2026-07-24/morning-report.md"
+  },
+  "metrics": {
+    "duration_seconds": 6138
+  },
+  "payload": {
+    "tasks_total": 3,
+    "tasks_succeeded": 2,
+    "tasks_failed": 1
+  },
+  "artifacts": [
+    {
+      "kind": "markdown",
+      "title": "Morning report",
+      "uri": "runs/2026-07-24/morning-report.md",
+      "content_type": "text/markdown"
+    }
+  ],
+  "correlation_id": "night-2026-07-24"
+}

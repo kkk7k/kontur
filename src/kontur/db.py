@@ -1,0 +1,362 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+from kontur.models import EventCreate, EventStatus, EventView
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    producer TEXT NOT NULL,
+    agent TEXT,
+    run_id TEXT,
+    type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL,
+    confidence REAL,
+    requires_action INTEGER NOT NULL,
+    approval_required INTEGER NOT NULL,
+    recommended_action TEXT,
+    deduplication_key TEXT NOT NULL,
+    source_json TEXT,
+    metrics_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    correlation_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (producer, deduplication_key)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    uri TEXT NOT NULL,
+    content_type TEXT,
+    checksum TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    external_message_id TEXT,
+    last_error_safe TEXT,
+    sent_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (event_id, channel, recipient)
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL,
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    result TEXT NOT NULL,
+    metadata_safe_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+CREATE INDEX IF NOT EXISTS idx_deliveries_pending
+ON deliveries(status, next_attempt_at);
+"""
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class Database:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def initialize(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.connection() as connection:
+            connection.executescript(SCHEMA)
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def create_event(
+        self,
+        event: EventCreate,
+        recipients: frozenset[int],
+    ) -> tuple[EventView, bool]:
+        now = utc_now()
+        now_text = now.isoformat()
+        with self.connection() as connection:
+            existing = connection.execute(
+                "SELECT * FROM events WHERE producer = ? AND deduplication_key = ?",
+                (event.producer, event.deduplication_key),
+            ).fetchone()
+            if existing:
+                return self._row_to_event(connection, existing), False
+
+            data = event.model_dump(mode="json", exclude={"artifacts"})
+            connection.execute(
+                """
+                INSERT INTO events (
+                    id, schema_version, occurred_at, received_at, producer, agent,
+                    run_id, type, severity, title, summary, status, confidence,
+                    requires_action, approval_required, recommended_action,
+                    deduplication_key, source_json, metrics_json, payload_json,
+                    correlation_id, created_at, updated_at
+                ) VALUES (
+                    :id, :schema_version, :occurred_at, :received_at, :producer, :agent,
+                    :run_id, :type, :severity, :title, :summary, :status, :confidence,
+                    :requires_action, :approval_required, :recommended_action,
+                    :deduplication_key, :source_json, :metrics_json, :payload_json,
+                    :correlation_id, :created_at, :updated_at
+                )
+                """,
+                {
+                    **data,
+                    "received_at": now_text,
+                    "status": EventStatus.NEW.value,
+                    "requires_action": int(event.requires_action),
+                    "approval_required": int(event.approval_required),
+                    "source_json": json.dumps(data["source"], ensure_ascii=False)
+                    if data["source"]
+                    else None,
+                    "metrics_json": json.dumps(data["metrics"], ensure_ascii=False),
+                    "payload_json": json.dumps(data["payload"], ensure_ascii=False),
+                    "created_at": now_text,
+                    "updated_at": now_text,
+                },
+            )
+            for artifact in event.artifacts:
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        event_id, kind, title, uri, content_type, checksum, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.id,
+                        artifact.kind,
+                        artifact.title,
+                        artifact.uri,
+                        artifact.content_type,
+                        artifact.checksum,
+                        now_text,
+                    ),
+                )
+            if self._should_notify(event):
+                for recipient in recipients:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO deliveries (
+                            event_id, channel, recipient, status, attempts,
+                            next_attempt_at, created_at, updated_at
+                        ) VALUES (?, 'telegram', ?, 'pending', 0, ?, ?, ?)
+                        """,
+                        (event.id, str(recipient), now_text, now_text, now_text),
+                    )
+            self._audit(
+                connection,
+                actor_type="producer",
+                actor_id=event.producer,
+                action="event.created",
+                entity_type="event",
+                entity_id=event.id,
+                result="success",
+            )
+            row = connection.execute("SELECT * FROM events WHERE id = ?", (event.id,)).fetchone()
+            assert row is not None
+            return self._row_to_event(connection, row), True
+
+    def get_event(self, event_id: str) -> EventView | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            return self._row_to_event(connection, row) if row else None
+
+    def list_events(
+        self,
+        *,
+        status: EventStatus | None = None,
+        event_type: str | None = None,
+        limit: int = 50,
+    ) -> list[EventView]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status.value)
+        if event_type:
+            clauses.append("type = ?")
+            params.append(event_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self.connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM events {where} ORDER BY occurred_at DESC LIMIT ?",  # noqa: S608
+                params,
+            ).fetchall()
+            return [self._row_to_event(connection, row) for row in rows]
+
+    def transition_event(
+        self,
+        event_id: str,
+        target: EventStatus,
+        actor_id: str,
+    ) -> EventView | None:
+        allowed = {
+            EventStatus.NEW: {EventStatus.NOTIFIED, EventStatus.SEEN, EventStatus.RESOLVED},
+            EventStatus.NOTIFIED: {EventStatus.SEEN, EventStatus.RESOLVED, EventStatus.DISMISSED},
+            EventStatus.SEEN: {EventStatus.RESOLVED, EventStatus.DISMISSED},
+            EventStatus.DELIVERY_FAILED: {EventStatus.NOTIFIED, EventStatus.RESOLVED},
+        }
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            if not row:
+                return None
+            current = EventStatus(row["status"])
+            if target == current:
+                return self._row_to_event(connection, row)
+            if target not in allowed.get(current, set()):
+                raise ValueError(f"invalid event transition: {current} -> {target}")
+            connection.execute(
+                "UPDATE events SET status = ?, updated_at = ? WHERE id = ?",
+                (target.value, utc_now().isoformat(), event_id),
+            )
+            self._audit(
+                connection,
+                actor_type="user",
+                actor_id=actor_id,
+                action=f"event.{target.value}",
+                entity_type="event",
+                entity_id=event_id,
+                result="success",
+            )
+            updated = connection.execute(
+                "SELECT * FROM events WHERE id = ?", (event_id,)
+            ).fetchone()
+            assert updated is not None
+            return self._row_to_event(connection, updated)
+
+    def status(self) -> dict[str, object]:
+        with self.connection() as connection:
+            pending = connection.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE requires_action = 1
+                AND status IN ('new', 'notified', 'seen', 'delivery_failed')
+                """
+            ).fetchone()[0]
+            failed = connection.execute(
+                "SELECT COUNT(*) FROM deliveries WHERE status = 'failed'"
+            ).fetchone()[0]
+            latest = connection.execute(
+                "SELECT occurred_at FROM events ORDER BY occurred_at DESC LIMIT 1"
+            ).fetchone()
+            return {
+                "pending_inbox": pending,
+                "failed_deliveries": failed,
+                "latest_event_at": datetime.fromisoformat(latest[0]) if latest else None,
+            }
+
+    @staticmethod
+    def _should_notify(event: EventCreate) -> bool:
+        return event.severity.value in {"error", "critical"} or event.requires_action
+
+    @staticmethod
+    def _audit(
+        connection: sqlite3.Connection,
+        *,
+        actor_type: str,
+        actor_id: str,
+        action: str,
+        entity_type: str,
+        entity_id: str,
+        result: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO audit_log (
+                occurred_at, actor_type, actor_id, action,
+                entity_type, entity_id, result, metadata_safe_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
+            """,
+            (
+                utc_now().isoformat(),
+                actor_type,
+                actor_id,
+                action,
+                entity_type,
+                entity_id,
+                result,
+            ),
+        )
+
+    @staticmethod
+    def _row_to_event(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> EventView:
+        artifacts = connection.execute(
+            """
+            SELECT kind, title, uri, content_type, checksum
+            FROM artifacts WHERE event_id = ? ORDER BY id
+            """,
+            (row["id"],),
+        ).fetchall()
+        return EventView.model_validate(
+            {
+                "id": row["id"],
+                "schema_version": row["schema_version"],
+                "occurred_at": row["occurred_at"],
+                "received_at": row["received_at"],
+                "producer": row["producer"],
+                "agent": row["agent"],
+                "run_id": row["run_id"],
+                "type": row["type"],
+                "severity": row["severity"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "status": row["status"],
+                "confidence": row["confidence"],
+                "requires_action": bool(row["requires_action"]),
+                "approval_required": bool(row["approval_required"]),
+                "recommended_action": row["recommended_action"],
+                "deduplication_key": row["deduplication_key"],
+                "source": json.loads(row["source_json"]) if row["source_json"] else None,
+                "metrics": json.loads(row["metrics_json"]),
+                "payload": json.loads(row["payload_json"]),
+                "artifacts": [dict(artifact) for artifact in artifacts],
+                "correlation_id": row["correlation_id"],
+            }
+        )
