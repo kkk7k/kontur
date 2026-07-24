@@ -94,6 +94,41 @@ CREATE TABLE IF NOT EXISTS vacancy_items (
     PRIMARY KEY (source, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_run_at TEXT,
+    last_success_at TEXT,
+    last_failure_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS automations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    agent_id TEXT REFERENCES agents(id),
+    kind TEXT NOT NULL,
+    schedule TEXT,
+    status TEXT NOT NULL,
+    last_run_at TEXT,
+    last_success_at TEXT,
+    last_failure_at TEXT,
+    last_heartbeat_at TEXT,
+    stale_after_seconds INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watchdog_incidents (
+    target_id TEXT PRIMARY KEY REFERENCES automations(id),
+    opened_at TEXT NOT NULL,
+    resolved_at TEXT,
+    event_id TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
 CREATE INDEX IF NOT EXISTS idx_deliveries_pending
@@ -115,6 +150,8 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             connection.executescript(SCHEMA)
+            self._seed_registry(connection)
+            self._backfill_registry(connection)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -220,10 +257,161 @@ class Database:
                 entity_id=event.id,
                 result="success",
             )
+            self._update_registry_from_event(connection, event)
             row = connection.execute("SELECT * FROM events WHERE id = ?", (event.id,)).fetchone()
             assert row is not None
             return self._row_to_event(connection, row), True
 
+    @staticmethod
+    def _seed_registry(connection: sqlite3.Connection) -> None:
+        now = utc_now().isoformat()
+        agents = (
+            ("night-agent", "Night Agent", "Ночные технические задачи", "active"),
+            ("career", "Career Agent", "Карьера и вакансии", "active"),
+            ("travel", "Travel Deal Agent", "Выгодные поездки", "planned"),
+            ("renovation", "Renovation Price Agent", "Закупки для ремонта", "planned"),
+        )
+        for values in agents:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO agents (
+                    id, name, description, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (*values, now, now),
+            )
+        automations = (
+            (
+                "kontur-api", "Kontur Core API", None, "service", None,
+                "healthy", 90,
+            ),
+            (
+                "kontur-bot", "Telegram Bot", None, "service", None,
+                "healthy", 90,
+            ),
+            (
+                "kontur-worker", "Delivery Worker + Watchdog", None, "service",
+                None, "healthy", 90,
+            ),
+            (
+                "n8n", "n8n", None, "service", None, "unknown", 180,
+            ),
+            (
+                "night-agent-nightly", "Night Agent nightly", "night-agent",
+                "workflow", "external", "active", None,
+            ),
+            (
+                "n8n-daily-digest", "Daily digest", None, "workflow",
+                "daily@08:30", "active", None,
+            ),
+            (
+                "hh-vacancy-monitor", "HH vacancy monitor", "career", "workflow",
+                "every:30m", "paused", None,
+            ),
+        )
+        for automation in automations:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO automations (
+                    id, name, agent_id, kind, schedule, status,
+                    stale_after_seconds, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (*automation, now, now),
+            )
+
+    @staticmethod
+    def _update_registry_from_event(
+        connection: sqlite3.Connection,
+        event: EventCreate,
+    ) -> None:
+        occurred = event.occurred_at.isoformat()
+        success = event.type in {"run_completed", "daily_digest_ready"}
+        failure = event.type in {"run_failed"}
+        agent_id = "night-agent" if event.producer == "night-agent" else event.agent
+        if agent_id:
+            connection.execute(
+                """
+                UPDATE agents
+                SET last_run_at = ?,
+                    last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+                    last_failure_at = CASE WHEN ? THEN ? ELSE last_failure_at END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    occurred, int(success), occurred, int(failure), occurred,
+                    utc_now().isoformat(), agent_id,
+                ),
+            )
+        automation_id = event.payload.get("automation_id")
+        if not automation_id and event.type == "daily_digest_ready":
+            automation_id = "n8n-daily-digest"
+        if not automation_id and event.producer == "night-agent":
+            automation_id = "night-agent-nightly"
+        if automation_id:
+            connection.execute(
+                """
+                UPDATE automations
+                SET last_run_at = ?,
+                    last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+                    last_failure_at = CASE WHEN ? THEN ? ELSE last_failure_at END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    occurred, int(success), occurred, int(failure), occurred,
+                    utc_now().isoformat(), str(automation_id),
+                ),
+            )
+
+    @staticmethod
+    def _backfill_registry(connection: sqlite3.Connection) -> None:
+        mappings = (
+            ("agents", "night-agent", "producer = 'night-agent'"),
+            ("agents", "career", "agent = 'career'"),
+            ("automations", "night-agent-nightly", "producer = 'night-agent'"),
+            ("automations", "n8n-daily-digest", "type = 'daily_digest_ready'"),
+        )
+        for table, entity_id, condition in mappings:
+            row = connection.execute(
+                f"""
+                SELECT
+                    MAX(occurred_at) AS last_run_at,
+                    MAX(CASE
+                        WHEN type IN ('run_completed', 'daily_digest_ready')
+                        THEN occurred_at
+                    END) AS last_success_at,
+                    MAX(CASE WHEN type = 'run_failed' THEN occurred_at END)
+                        AS last_failure_at
+                FROM events WHERE {condition}
+                """  # noqa: S608
+            ).fetchone()
+            if not row or not row["last_run_at"]:
+                continue
+            connection.execute(
+                f"""
+                UPDATE {table}
+                SET last_run_at = MAX(
+                        COALESCE(last_run_at, ''), COALESCE(?, '')
+                    ),
+                    last_success_at = NULLIF(MAX(
+                        COALESCE(last_success_at, ''), COALESCE(?, '')
+                    ), ''),
+                    last_failure_at = NULLIF(MAX(
+                        COALESCE(last_failure_at, ''), COALESCE(?, '')
+                    ), ''),
+                    updated_at = ?
+                WHERE id = ?
+                """,  # noqa: S608
+                (
+                    row["last_run_at"],
+                    row["last_success_at"],
+                    row["last_failure_at"],
+                    utc_now().isoformat(),
+                    entity_id,
+                ),
+            )
     def ensure_deliveries(self, event_id: str, recipients: frozenset[int]) -> None:
         now_text = utc_now().isoformat()
         with self.connection() as connection:

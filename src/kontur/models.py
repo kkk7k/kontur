@@ -116,3 +116,38 @@ class VacancyCollectionResult(BaseModel):
     created: int
     duplicate: int
     bootstrapped: bool
+
+
+class RegistryStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    PLANNED = "planned"
+    HEALTHY = "healthy"
+    FAILED = "failed"
+    STALE = "stale"
+    UNKNOWN = "unknown"
+
+
+class AgentView(BaseModel):
+    id: str
+    name: str
+    description: str
+    status: RegistryStatus
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+
+
+class AutomationView(BaseModel):
+    id: str
+    name: str
+    agent_id: str | None = None
+    kind: str
+    schedule: str | None = None
+    status: RegistryStatus
+    last_run_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
+    next_run_at: datetime | None = None
+    stale_after_seconds: int | None = None

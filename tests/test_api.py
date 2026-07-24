@@ -58,6 +58,8 @@ def test_api_auth_and_idempotency(tmp_path: Path) -> None:
         assert second.status_code == 200
         assert second.json()["id"] == first.json()["id"]
         assert client.get("/api/v1/status").json()["pending_inbox"] == 1
+        assert len(client.get("/api/v1/agents").json()) == 4
+        assert len(client.get("/api/v1/automations").json()) == 7
 
 
 def test_api_rejects_producer_mismatch(tmp_path: Path) -> None:

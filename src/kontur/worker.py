@@ -14,6 +14,9 @@ from kontur.config import Settings
 from kontur.db import Database
 from kontur.formatting import format_event
 from kontur.models import EventCreate
+from kontur.registry import Registry
+from kontur.service import KonturService
+from kontur.watchdog import Watchdog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -254,9 +257,24 @@ async def run() -> None:
         artifact_allowed_roots=settings.artifact_allowed_roots,
         artifact_max_bytes=settings.artifact_max_bytes,
     )
+    service = KonturService(
+        database,
+        settings.telegram_allowed_user_ids,
+        timezone=settings.timezone,
+    )
+    watchdog = Watchdog(
+        Registry(database, settings.timezone),
+        service,
+        n8n_url=settings.n8n_url,
+    )
+    next_watchdog_at = datetime.now(UTC)
     try:
         while True:
             await worker.deliver_once()
+            now = datetime.now(UTC)
+            if now >= next_watchdog_at:
+                watchdog.check(now)
+                next_watchdog_at = now + timedelta(seconds=30)
             await asyncio.sleep(settings.poll_interval_seconds)
     finally:
         await bot.session.close()

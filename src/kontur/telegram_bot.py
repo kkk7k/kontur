@@ -12,6 +12,7 @@ from kontur.config import Settings
 from kontur.db import Database
 from kontur.formatting import format_event
 from kontur.models import EventStatus
+from kontur.registry import Registry
 from kontur.service import KonturService
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ def create_router(
             "/inbox — события, требующие действия\n"
             "/errors — ошибки\n"
             "/digest — итог за текущий день\n"
+            "/agents — реестр агентов\n"
+            "/automations — автоматизации и расписания\n"
             "/status — состояние системы\n"
             "/help — все команды"
         )
@@ -69,6 +72,8 @@ def create_router(
             "/runs — завершения запусков\n"
             "/errors — ошибки\n"
             "/digest — создать итог за текущий день\n"
+            "/agents — агенты и последние запуски\n"
+            "/automations — состояние и расписания\n"
             "/status — здоровье Контур Core"
         )
 
@@ -139,6 +144,52 @@ def create_router(
             f"Failed deliveries: {state.failed_deliveries}"
         )
 
+    def display_time(value) -> str:
+        if value is None:
+            return "—"
+        return value.astimezone().strftime("%d.%m %H:%M")
+
+    @router.message(Command("agents"))
+    async def agents_command(message: Message) -> None:
+        if not authorized(message.from_user.id if message.from_user else None):
+            return
+        lines = ["<b>Агенты</b>"]
+        for agent in service.agents():
+            icon = {
+                "active": "🟢",
+                "planned": "⚪️",
+                "paused": "⏸",
+                "failed": "🔴",
+            }.get(agent.status.value, "⚪️")
+            lines.append(
+                f"\n{icon} <b>{agent.name}</b>\n"
+                f"Статус: {agent.status.value}\n"
+                f"Последний запуск: {display_time(agent.last_run_at)}"
+            )
+        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+
+    @router.message(Command("automations"))
+    async def automations_command(message: Message) -> None:
+        if not authorized(message.from_user.id if message.from_user else None):
+            return
+        lines = ["<b>Автоматизации</b>"]
+        for automation in service.automations():
+            icon = {
+                "healthy": "🟢",
+                "active": "🟢",
+                "paused": "⏸",
+                "stale": "🔴",
+                "failed": "🔴",
+                "unknown": "⚪️",
+            }.get(automation.status.value, "⚪️")
+            lines.append(
+                f"\n{icon} <b>{automation.name}</b>\n"
+                f"Статус: {automation.status.value}\n"
+                f"Последний запуск: {display_time(automation.last_run_at)}\n"
+                f"Следующий запуск: {display_time(automation.next_run_at)}"
+            )
+        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+
     @router.message(Command("digest"))
     async def digest_command(message: Message) -> None:
         user_id = message.from_user.id if message.from_user else None
@@ -184,6 +235,7 @@ async def run() -> None:
         )
     database = Database(settings.database_path)
     database.initialize()
+    registry = Registry(database, settings.timezone)
     service = KonturService(
         database,
         settings.telegram_allowed_user_ids,
@@ -198,7 +250,16 @@ async def run() -> None:
             discovery_mode=settings.telegram_discovery_mode,
         )
     )
-    await dispatcher.start_polling(bot)
+    async def heartbeat() -> None:
+        while True:
+            registry.heartbeat("kontur-bot")
+            await asyncio.sleep(30)
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        await dispatcher.start_polling(bot)
+    finally:
+        heartbeat_task.cancel()
 
 
 def main() -> None:

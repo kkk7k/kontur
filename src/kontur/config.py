@@ -68,6 +68,7 @@ class Settings:
     hh_pages: int = 2
     hh_client_id: str = ""
     hh_client_secret: str = ""
+    n8n_url: str = "http://127.0.0.1:5678"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -114,4 +115,5 @@ class Settings:
             hh_pages=int(os.getenv("KONTUR_HH_PAGES", "2")),
             hh_client_id=os.getenv("KONTUR_HH_CLIENT_ID", ""),
             hh_client_secret=os.getenv("KONTUR_HH_CLIENT_SECRET", ""),
+            n8n_url=os.getenv("KONTUR_N8N_URL", "http://127.0.0.1:5678"),
         )

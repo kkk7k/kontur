@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 from kontur.db import Database
 from kontur.models import (
+    AgentView,
+    AutomationView,
     EventCreate,
     EventList,
     EventStatus,
@@ -13,6 +15,7 @@ from kontur.models import (
     Severity,
     StatusView,
 )
+from kontur.registry import Registry
 
 
 @dataclass(slots=True)
@@ -43,6 +46,12 @@ class KonturService:
     def status(self) -> StatusView:
         values = self.database.status()
         return StatusView(status="ok", database="ok", **values)
+
+    def agents(self) -> list[AgentView]:
+        return Registry(self.database, self.timezone).agents()
+
+    def automations(self) -> list[AutomationView]:
+        return Registry(self.database, self.timezone).automations()
 
     def create_daily_digest(
         self,

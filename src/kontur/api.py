@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
@@ -10,6 +11,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from kontur.config import Settings
 from kontur.db import Database
 from kontur.models import (
+    AgentView,
+    AutomationView,
     EventCreate,
     EventList,
     EventStatus,
@@ -18,6 +21,7 @@ from kontur.models import (
     VacancyCollectionResult,
     VacancyItem,
 )
+from kontur.registry import Registry
 from kontur.service import KonturService
 from kontur.vacancies import HHSource
 from kontur.vacancy_collector import VacancyCollector
@@ -37,7 +41,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         database.initialize()
-        yield
+        registry = Registry(database, settings.timezone)
+
+        async def heartbeat() -> None:
+            while True:
+                registry.heartbeat("kontur-api")
+                await asyncio.sleep(30)
+
+        task = asyncio.create_task(heartbeat())
+        try:
+            yield
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     app = FastAPI(title="Kontur API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -68,6 +85,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/status", response_model=StatusView)
     def system_status(service: KonturService = Depends(get_service)) -> StatusView:
         return service.status()
+
+    @app.get("/api/v1/agents", response_model=list[AgentView])
+    def list_agents(
+        service: KonturService = Depends(get_service),
+    ) -> list[AgentView]:
+        return service.agents()
+
+    @app.get("/api/v1/automations", response_model=list[AutomationView])
+    def list_automations(
+        service: KonturService = Depends(get_service),
+    ) -> list[AutomationView]:
+        return service.automations()
 
     @app.post("/api/v1/events", response_model=EventView)
     def create_event(
