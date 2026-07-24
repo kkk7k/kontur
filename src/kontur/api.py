@@ -18,7 +18,11 @@ LOGGER = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     database = Database(settings.database_path)
-    service = KonturService(database, settings.telegram_allowed_user_ids)
+    service = KonturService(
+        database,
+        settings.telegram_allowed_user_ids,
+        timezone=settings.timezone,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -88,6 +92,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event = service.event(event_id)
         if event is None:
             raise HTTPException(status_code=404, detail="event not found")
+        return event
+
+    @app.post(
+        "/api/v1/digests/daily",
+        response_model=EventView,
+        responses={204: {"description": "No events for the period"}},
+    )
+    def create_daily_digest(
+        response: Response,
+        producer: str = Depends(authenticate_producer),
+        service: KonturService = Depends(get_service),
+    ) -> EventView | Response:
+        event, created = service.create_daily_digest(producer=producer)
+        if event is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return event
 
     def transition_event(

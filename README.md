@@ -48,6 +48,14 @@ kontur-worker
 kontur-bot
 ```
 
+Ручное формирование ежедневного digest:
+
+```bash
+kontur-digest
+```
+
+То же действие доступно владельцу через `/digest` в Telegram.
+
 Проверка:
 
 ```bash

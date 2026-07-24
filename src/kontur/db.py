@@ -242,6 +242,25 @@ class Database:
             ).fetchall()
             return [self._row_to_event(connection, row) for row in rows]
 
+    def list_events_since(
+        self,
+        since: datetime,
+        *,
+        limit: int = 500,
+    ) -> list[EventView]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM events
+                WHERE datetime(occurred_at) >= datetime(?)
+                AND type != 'daily_digest_ready'
+                ORDER BY occurred_at DESC
+                LIMIT ?
+                """,
+                (since.isoformat(), limit),
+            ).fetchall()
+            return [self._row_to_event(connection, row) for row in rows]
+
     def transition_event(
         self,
         event_id: str,

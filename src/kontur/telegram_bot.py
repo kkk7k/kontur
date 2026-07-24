@@ -54,6 +54,7 @@ def create_router(
             "/today — последние события\n"
             "/inbox — события, требующие действия\n"
             "/errors — ошибки\n"
+            "/digest — итог за текущий день\n"
             "/status — состояние системы\n"
             "/help — все команды"
         )
@@ -67,6 +68,7 @@ def create_router(
             "/inbox — необработанные события\n"
             "/runs — завершения запусков\n"
             "/errors — ошибки\n"
+            "/digest — создать итог за текущий день\n"
             "/status — здоровье Контур Core"
         )
 
@@ -137,6 +139,20 @@ def create_router(
             f"Failed deliveries: {state.failed_deliveries}"
         )
 
+    @router.message(Command("digest"))
+    async def digest_command(message: Message) -> None:
+        user_id = message.from_user.id if message.from_user else None
+        if not authorized(user_id):
+            return
+        event, created = service.create_daily_digest(producer=f"telegram-{user_id}")
+        if event is None:
+            await message.answer("За сегодня пока нет событий для digest.")
+            return
+        if created:
+            await message.answer("Digest сформирован и поставлен в очередь доставки.")
+        else:
+            await message.answer("Сегодняшний digest уже сформирован.")
+
     @router.callback_query(F.data.startswith("resolve:"))
     async def resolve_callback(callback: CallbackQuery) -> None:
         user_id = callback.from_user.id
@@ -168,7 +184,11 @@ async def run() -> None:
         )
     database = Database(settings.database_path)
     database.initialize()
-    service = KonturService(database, settings.telegram_allowed_user_ids)
+    service = KonturService(
+        database,
+        settings.telegram_allowed_user_ids,
+        timezone=settings.timezone,
+    )
     bot = Bot(settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(

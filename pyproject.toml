@@ -29,6 +29,7 @@ kontur-bot = "kontur.telegram_bot:main"
 kontur-worker = "kontur.worker:main"
 kontur-night-report = "kontur.night_agent_adapter:main"
 kontur-services = "kontur.service_manager:main"
+kontur-digest = "kontur.digest_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kontur"]
