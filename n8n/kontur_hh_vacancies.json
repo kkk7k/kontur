@@ -1,0 +1,60 @@
+{
+  "name": "kontur_hh_vacancies",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 160]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 30}]
+        }
+      },
+      "id": "schedule",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.KONTUR_API_URL + '/api/v1/collectors/hh/run' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-Kontur-Producer", "value": "n8n"},
+            {
+              "name": "X-Kontur-API-Key",
+              "value": "={{ $env.KONTUR_N8N_API_KEY }}"
+            }
+          ]
+        },
+        "options": {"timeout": 60000}
+      },
+      "id": "collect",
+      "name": "Collect HH Vacancies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 0]
+    }
+  ],
+  "connections": {
+    "Manual Test": {
+      "main": [[{"node": "Collect HH Vacancies", "type": "main", "index": 0}]]
+    },
+    "Every 30 Minutes": {
+      "main": [[{"node": "Collect HH Vacancies", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1", "timezone": "Europe/Moscow"},
+  "versionId": "kontur-hh-vacancies-v1",
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": []
+}

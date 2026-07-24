@@ -62,6 +62,12 @@ class Settings:
     night_agent_outbox: Path
     artifact_allowed_roots: tuple[Path, ...]
     artifact_max_bytes: int
+    hh_search_text: str = "Go OR Golang"
+    hh_area: str = "113"
+    hh_user_agent: str = "personal-kontur/0.1 (personal vacancy monitor)"
+    hh_pages: int = 2
+    hh_client_id: str = ""
+    hh_client_secret: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -99,4 +105,13 @@ class Settings:
             artifact_max_bytes=int(
                 os.getenv("KONTUR_ARTIFACT_MAX_BYTES", str(10 * 1024 * 1024))
             ),
+            hh_search_text=os.getenv("KONTUR_HH_SEARCH_TEXT", "Go OR Golang"),
+            hh_area=os.getenv("KONTUR_HH_AREA", "113"),
+            hh_user_agent=os.getenv(
+                "KONTUR_HH_USER_AGENT",
+                "personal-kontur/0.1 (personal vacancy monitor)",
+            ),
+            hh_pages=int(os.getenv("KONTUR_HH_PAGES", "2")),
+            hh_client_id=os.getenv("KONTUR_HH_CLIENT_ID", ""),
+            hh_client_secret=os.getenv("KONTUR_HH_CLIENT_SECRET", ""),
         )

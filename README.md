@@ -12,6 +12,20 @@ Telegram-интерфейс: [@personal_kontur_bot](https://t.me/personal_kontur
 Night Agent -> Kontur API -> SQLite -> delivery worker -> Telegram
 ```
 
+Монитор вакансий:
+
+```text
+n8n schedule -> HH API -> фильтр 3–6 лет / Senior -> dedup -> Telegram
+```
+
+Сейчас подключён официальный API HH. Вакансия считается подходящей для
+уведомления, если у неё указан опыт `3–6 лет` или в названии есть
+`Senior`, `Старший` либо `Ведущий`. Повторно одна и та же вакансия не
+отправляется. Параметры поиска задаются через `KONTUR_HH_*`.
+Для текущего API HH нужно зарегистрировать приложение и заполнить
+`KONTUR_HH_CLIENT_ID` и `KONTUR_HH_CLIENT_SECRET`; Контур получает application
+token по OAuth2 client credentials и не выводит его в логи.
+
 Контур хранит события независимо от Telegram. Повторная регистрация события
 идемпотентна, а неудачная доставка остаётся в outbox и повторяется.
 
@@ -52,6 +66,14 @@ kontur-bot
 
 ```bash
 kontur-digest
+```
+
+Ручной запуск поиска вакансий (обычно этот endpoint вызывает n8n):
+
+```bash
+curl -X POST http://127.0.0.1:8090/api/v1/collectors/hh/run \
+  -H 'X-Kontur-Producer: n8n' \
+  -H 'X-Kontur-API-Key: change-me'
 ```
 
 То же действие доступно владельцу через `/digest` в Telegram.

@@ -9,8 +9,17 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 
 from kontur.config import Settings
 from kontur.db import Database
-from kontur.models import EventCreate, EventList, EventStatus, EventView, StatusView
+from kontur.models import (
+    EventCreate,
+    EventList,
+    EventStatus,
+    EventView,
+    StatusView,
+    VacancyCollectionResult,
+)
 from kontur.service import KonturService
+from kontur.vacancies import HHSource
+from kontur.vacancy_collector import VacancyCollector
 
 LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +118,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return event
+
+    @app.post("/api/v1/collectors/hh/run", response_model=VacancyCollectionResult)
+    def collect_hh_vacancies(
+        _: str = Depends(authenticate_producer),
+        service: KonturService = Depends(get_service),
+    ) -> VacancyCollectionResult:
+        source = HHSource(
+            search_text=settings.hh_search_text,
+            area=settings.hh_area,
+            user_agent=settings.hh_user_agent,
+            pages=settings.hh_pages,
+            client_id=settings.hh_client_id,
+            client_secret=settings.hh_client_secret,
+        )
+        return VacancyCollector(database=database, service=service).run(source)
 
     def transition_event(
         event_id: str,

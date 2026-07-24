@@ -31,6 +31,8 @@ kontur-configure-n8n
   проверяет shared secret и регистрирует событие в Core.
 - `kontur_daily_digest.json` — каждый день в 08:30 МСК просит Core создать
   агрегированный итог; при отсутствии событий Core возвращает `204`.
+- `kontur_hh_vacancies.json` — каждые 30 минут просит Core найти новые
+  HH-вакансии и отправить только ранее не встречавшиеся.
 - `kontur_status_watchdog.json` — проверяет состояние Core каждые 15 минут.
 
 JSON-файлы не содержат credentials. После импорта проверить URL и переменные
@@ -47,6 +49,12 @@ JSON-файлы не содержат credentials. После импорта п�
 - расписание: ежедневно в 08:30 `Europe/Moscow`;
 - Manual Trigger оставлен для безопасной CLI-проверки после обновлений;
 - end-to-end CLI execution пройден 2026-07-24.
+
+`kontur_hh_vacancies` также импортирован:
+
+- workflow ID: `xBPLzZI09vCOZU2f`;
+- расписание подготовлено на каждые 30 минут;
+- workflow оставлен inactive до добавления OAuth credentials приложения HH.
 
 Нельзя публиковать webhook в интернет без TLS, дополнительной авторизации и
 ограничения доступа.

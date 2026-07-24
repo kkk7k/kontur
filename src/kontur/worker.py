@@ -71,14 +71,7 @@ class DeliveryWorker:
             self._fail_permanently(delivery["id"], "event not found")
             return
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Обработано",
-                        callback_data=f"resolve:{event.id}",
-                    )
-                ]
-            ]
+            inline_keyboard=self._keyboard_rows(event)
         )
         try:
             message = await self.bot.send_message(
@@ -207,6 +200,32 @@ class DeliveryWorker:
             LOGGER.warning("artifact exceeds size limit: %s", resolved)
             return None
         return resolved
+
+    @staticmethod
+    def _keyboard_rows(event: EventCreate) -> list[list[InlineKeyboardButton]]:
+        if event.type == "vacancy_found":
+            return [
+                [
+                    InlineKeyboardButton(
+                        text="Открыть вакансию",
+                        url=str(event.source.uri),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Обработано",
+                        callback_data=f"resolve:{event.id}",
+                    )
+                ],
+            ]
+        return [
+            [
+                InlineKeyboardButton(
+                    text="Обработано",
+                    callback_data=f"resolve:{event.id}",
+                )
+            ]
+        ]
 
     def _fail_permanently(self, delivery_id: int, safe_error: str) -> None:
         with self.database.connection() as connection:

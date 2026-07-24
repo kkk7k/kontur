@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from kontur.models import EventCreate, EventStatus, EventView
+from kontur.models import EventCreate, EventStatus, EventView, VacancyItem
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -76,10 +76,30 @@ CREATE TABLE IF NOT EXISTS audit_log (
     metadata_safe_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS vacancy_items (
+    source TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    company TEXT,
+    experience_id TEXT,
+    experience_name TEXT,
+    salary_from INTEGER,
+    salary_to INTEGER,
+    salary_currency TEXT,
+    published_at TEXT NOT NULL,
+    matched_by_json TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    PRIMARY KEY (source, external_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
 CREATE INDEX IF NOT EXISTS idx_deliveries_pending
 ON deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_vacancy_items_published
+ON vacancy_items(published_at DESC);
 """
 
 
@@ -217,6 +237,49 @@ class Database:
                     """,
                     (event_id, str(recipient), now_text, now_text, now_text),
                 )
+
+    def create_vacancy_item(
+        self,
+        *,
+        vacancy: VacancyItem,
+        event_id: str,
+    ) -> bool:
+        now = utc_now().isoformat()
+        with self.connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO vacancy_items (
+                    source, external_id, event_id, title, url, company,
+                    experience_id, experience_name, salary_from, salary_to,
+                    salary_currency, published_at, matched_by_json, first_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    vacancy.source,
+                    vacancy.external_id,
+                    event_id,
+                    vacancy.title,
+                    vacancy.url,
+                    vacancy.company,
+                    vacancy.experience_id,
+                    vacancy.experience_name,
+                    vacancy.salary_from,
+                    vacancy.salary_to,
+                    vacancy.salary_currency,
+                    vacancy.published_at.isoformat(),
+                    json.dumps(vacancy.matched_by, ensure_ascii=False),
+                    now,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def vacancy_item_count(self, source: str) -> int:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM vacancy_items WHERE source = ?",
+                (source,),
+            ).fetchone()
+            return int(row["count"])
 
     def get_event(self, event_id: str) -> EventView | None:
         with self.connection() as connection:

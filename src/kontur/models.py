@@ -92,3 +92,27 @@ class StatusView(BaseModel):
     pending_inbox: int
     failed_deliveries: int
     latest_event_at: datetime | None = None
+
+
+class VacancyItem(BaseModel):
+    source: str
+    external_id: str
+    title: str
+    url: str
+    company: str | None = None
+    experience_id: str | None = None
+    experience_name: str | None = None
+    salary_from: int | None = None
+    salary_to: int | None = None
+    salary_currency: str | None = None
+    published_at: datetime
+    matched_by: list[str] = Field(default_factory=list)
+
+
+class VacancyCollectionResult(BaseModel):
+    source: str
+    fetched: int
+    qualified: int
+    created: int
+    duplicate: int
+    bootstrapped: bool

@@ -162,3 +162,25 @@ def test_imports_night_agent_outbox(tmp_path: Path) -> None:
     assert worker.import_night_agent_outbox() == 1
     assert database.get_event("evt_outbox") is not None
     assert (outbox / "processed" / "evt_outbox.json").exists()
+
+
+def test_vacancy_event_has_domain_buttons() -> None:
+    event = EventCreate.model_validate(
+        {
+            "id": "evt_vacancy_123",
+            "occurred_at": "2026-07-24T03:12:00+03:00",
+            "producer": "career-agent",
+            "type": "vacancy_found",
+            "title": "Vacancy",
+            "deduplication_key": "vacancy:123",
+            "source": {
+                "kind": "vacancy",
+                "name": "hh",
+                "uri": "https://hh.ru/vacancy/123",
+            },
+        }
+    )
+    rows = DeliveryWorker._keyboard_rows(event)
+    callback_data = [button.callback_data for row in rows for button in row]
+    assert rows[0][0].url == "https://hh.ru/vacancy/123"
+    assert "resolve:evt_vacancy_123" in callback_data
