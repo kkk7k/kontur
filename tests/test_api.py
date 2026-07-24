@@ -19,6 +19,9 @@ def settings(tmp_path: Path) -> Settings:
         timezone="Europe/Moscow",
         log_level="INFO",
         poll_interval_seconds=0.01,
+        night_agent_outbox=tmp_path / "outbox",
+        artifact_allowed_roots=(tmp_path,),
+        artifact_max_bytes=1024,
     )
 
 

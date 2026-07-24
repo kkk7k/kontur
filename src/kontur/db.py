@@ -199,6 +199,20 @@ class Database:
             assert row is not None
             return self._row_to_event(connection, row), True
 
+    def ensure_deliveries(self, event_id: str, recipients: frozenset[int]) -> None:
+        now_text = utc_now().isoformat()
+        with self.connection() as connection:
+            for recipient in recipients:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO deliveries (
+                        event_id, channel, recipient, status, attempts,
+                        next_attempt_at, created_at, updated_at
+                    ) VALUES (?, 'telegram', ?, 'pending', 0, ?, ?, ?)
+                    """,
+                    (event_id, str(recipient), now_text, now_text, now_text),
+                )
+
     def get_event(self, event_id: str) -> EventView | None:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
