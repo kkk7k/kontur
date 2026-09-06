@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -11,11 +12,20 @@ from kontur.registry import Registry
 from kontur.service import KonturService
 
 
+def _tcp_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 @dataclass(slots=True)
 class Watchdog:
     registry: Registry
     service: KonturService
     n8n_url: str = "http://127.0.0.1:5678"
+    ration_ports: tuple[int, ...] = (5433, 6380)
     flap_threshold: int = 3
 
     def check(self, now: datetime | None = None) -> int:
@@ -31,6 +41,9 @@ class Watchdog:
                 self.registry.heartbeat("n8n", now)
         except httpx.HTTPError:
             pass
+
+        if all(_tcp_reachable("127.0.0.1", port) for port in self.ration_ports):
+            self.registry.heartbeat("ration-bot", now)
 
         stale = self.registry.stale_services(now)
         stale_ids = {automation.id for automation in stale}
