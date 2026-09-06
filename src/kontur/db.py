@@ -622,6 +622,28 @@ class Database:
             ).fetchall()
             return [self._row_to_event(connection, row) for row in rows]
 
+    def count_events(
+        self,
+        *,
+        status: EventStatus | None = None,
+        event_type: str | None = None,
+    ) -> int:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status.value)
+        if event_type:
+            clauses.append("type = ?")
+            params.append(event_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.connection() as connection:
+            row = connection.execute(
+                f"SELECT COUNT(*) AS total FROM events {where}",  # noqa: S608
+                params,
+            ).fetchone()
+            return int(row["total"])
+
     def list_events_since(
         self,
         since: datetime,

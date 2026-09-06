@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BotCommand, CallbackQuery, Message
 
 from kontur.config import Settings
 from kontur.db import Database
@@ -76,6 +76,7 @@ def create_router(
             "Контур подключён.\n\n"
             "/today — последние события\n"
             "/inbox — события, требующие действия\n"
+            "/runs — завершения запусков\n"
             "/errors — ошибки\n"
             "/digest — итог за текущий день\n"
             "/agents — реестр агентов\n"
@@ -111,11 +112,12 @@ def create_router(
     async def send_events(message: Message, *, event_type: str | None = None) -> None:
         if not is_owner(message.from_user.id if message.from_user else None):
             return
-        events = service.events(event_type=event_type, limit=10).items
-        if not events:
+        result = service.events(event_type=event_type, limit=10)
+        if not result.items:
             await message.answer("Событий нет.")
             return
-        text = format_event_list(events, header="Последние события:", timezone=service.timezone)
+        header = f"Последние события (показано {len(result.items)} из {result.total}):"
+        text = format_event_list(result.items, header=header, timezone=service.timezone)
         await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("today"))
@@ -130,22 +132,27 @@ def create_router(
     async def errors(message: Message) -> None:
         if not is_owner(message.from_user.id if message.from_user else None):
             return
-        events = [
+        matching = [
             event
             for event in service.events(limit=50).items
             if event.severity.value in {"error", "critical"}
-        ][:10]
+        ]
+        events = matching[:10]
         if not events:
             await message.answer("Ошибок нет.")
             return
-        text = format_event_list(events, header="Последние ошибки:", timezone=service.timezone)
+        header = (
+            f"Последние ошибки (показано {len(events)} из {len(matching)} "
+            "за последние 50 событий):"
+        )
+        text = format_event_list(events, header=header, timezone=service.timezone)
         await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("inbox"))
     async def inbox(message: Message) -> None:
         if not is_owner(message.from_user.id if message.from_user else None):
             return
-        events = [
+        matching = [
             event
             for event in service.events(limit=50).items
             if event.requires_action
@@ -156,11 +163,13 @@ def create_router(
                 EventStatus.SEEN,
                 EventStatus.DELIVERY_FAILED,
             }
-        ][:10]
+        ]
+        events = matching[:10]
         if not events:
             await message.answer("Inbox пуст.")
             return
-        text = format_event_list(events, header="Inbox:", timezone=service.timezone)
+        header = f"Inbox (показано {len(events)} из {len(matching)} за последние 50 событий):"
+        text = format_event_list(events, header=header, timezone=service.timezone)
         await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("status"))
@@ -298,6 +307,21 @@ async def run() -> None:
             discovery_mode=settings.telegram_discovery_mode,
         )
     )
+    await bot.set_my_commands(
+        [
+            BotCommand(command="today", description="Последние события"),
+            BotCommand(command="inbox", description="Требуют действия"),
+            BotCommand(command="runs", description="Завершения запусков"),
+            BotCommand(command="errors", description="Ошибки"),
+            BotCommand(command="digest", description="Итог за сегодня"),
+            BotCommand(command="agents", description="Реестр агентов"),
+            BotCommand(command="automations", description="Автоматизации"),
+            BotCommand(command="status", description="Состояние Контура"),
+            BotCommand(command="whoami", description="Мой Telegram ID"),
+            BotCommand(command="help", description="Все команды"),
+        ]
+    )
+
     async def heartbeat() -> None:
         while True:
             registry.heartbeat("kontur-bot")

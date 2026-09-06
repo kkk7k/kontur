@@ -42,7 +42,8 @@ class KonturService:
         limit: int = 50,
     ) -> EventList:
         items = self.database.list_events(status=status, event_type=event_type, limit=limit)
-        return EventList(items=items, total=len(items))
+        total = self.database.count_events(status=status, event_type=event_type)
+        return EventList(items=items, total=total)
 
     def transition(self, event_id: str, target: EventStatus, actor_id: str) -> EventView | None:
         return self.database.transition_event(event_id, target, actor_id)
