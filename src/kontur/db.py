@@ -345,6 +345,10 @@ class Database:
                 "n8n", "n8n", None, "service", None, "unknown", 180,
             ),
             (
+                "ration-bot", "Ration bot", None, "service", None,
+                "unknown", 180,
+            ),
+            (
                 "night-agent-nightly", "Night Agent nightly", "night-agent",
                 "workflow", "external", "active", None,
             ),

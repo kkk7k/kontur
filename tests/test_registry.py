@@ -8,7 +8,7 @@ from kontur.db import Database
 from kontur.models import EventCreate, RegistryStatus
 from kontur.registry import Registry
 from kontur.service import KonturService
-from kontur.watchdog import Watchdog
+from kontur.watchdog import Watchdog, _tcp_reachable
 
 
 def setup(tmp_path: Path) -> tuple[Database, KonturService, Registry]:
@@ -93,6 +93,32 @@ def test_initialize_backfills_registry_from_existing_events(tmp_path: Path) -> N
         if item.id == "n8n-daily-digest"
     )
     assert digest.last_success_at == occurred_at
+
+
+def test_watchdog_heartbeats_ration_when_ports_reachable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database, service, registry = setup(tmp_path)
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(httpx.ConnectError("no n8n")),
+    )
+    monkeypatch.setattr("kontur.watchdog._tcp_reachable", lambda host, port, timeout=2.0: True)
+    watchdog = Watchdog(registry, service)
+    watchdog.check(now)
+
+    ration = next(a for a in registry.automations(now) if a.id == "ration-bot")
+    assert ration.status == RegistryStatus.HEALTHY
+    assert ration.last_heartbeat_at == now
+
+    monkeypatch.setattr("kontur.watchdog._tcp_reachable", lambda host, port, timeout=2.0: False)
+    watchdog.check(now + timedelta(seconds=30))
+    ration = next(a for a in registry.automations(now) if a.id == "ration-bot")
+    assert ration.last_heartbeat_at == now
 
 
 def test_watchdog_opens_one_incident_until_recovery(
