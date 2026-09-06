@@ -42,10 +42,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
 
+    registry = Registry(database, settings.timezone)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         database.initialize()
-        registry = Registry(database, settings.timezone)
 
         async def heartbeat() -> None:
             while True:
@@ -101,6 +102,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         service: KonturService = Depends(get_service),
     ) -> list[AutomationView]:
         return service.automations()
+
+    @app.post("/api/v1/automations/{automation_id}/heartbeat", status_code=204)
+    def heartbeat_automation(
+        automation_id: str,
+        producer: str = Depends(authenticate_producer),
+    ) -> Response:
+        if producer != automation_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="producer may only heartbeat its own automation id",
+            )
+        known_service_ids = {
+            automation.id
+            for automation in registry.automations()
+            if automation.kind == "service"
+        }
+        if automation_id not in known_service_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown service")
+        registry.heartbeat(automation_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/api/v1/events", response_model=EventView)
     def create_event(
