@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from html import escape
+from typing import Any
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import BaseFilter, Command
@@ -15,8 +18,10 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    TelegramObject,
 )
 
+from kontur.analytics import AnalyticsStore
 from kontur.config import Settings
 from kontur.db import Database
 from kontur.formatting import format_event_list
@@ -25,6 +30,50 @@ from kontur.registry import Registry
 from kontur.service import KonturService
 
 LOGGER = logging.getLogger(__name__)
+
+
+class AnalyticsMiddleware(BaseMiddleware):
+    """Records every command and button press to a separate analytics
+    database — which commands get used, how slow they are, what fails —
+    without touching individual handlers."""
+
+    def __init__(self, store: AnalyticsStore) -> None:
+        self.store = store
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if isinstance(event, Message):
+            kind = "command"
+            text = event.text or ""
+            name = text.split()[0].lstrip("/").split("@")[0] if text else "text"
+            user_id = event.from_user.id if event.from_user else None
+        elif isinstance(event, CallbackQuery):
+            kind = "callback"
+            name = (event.data or "").split(":", 1)[0] or "unknown"
+            user_id = event.from_user.id if event.from_user else None
+        else:
+            return await handler(event, data)
+
+        started_at = time.monotonic()
+        error: str | None = None
+        try:
+            return await handler(event, data)
+        except Exception as exc:
+            error = type(exc).__name__
+            raise
+        finally:
+            self.store.record_interaction(
+                user_id=user_id,
+                kind=kind,
+                name=name,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                ok=error is None,
+                error=error,
+            )
 
 # Single source of truth for command name + description, used to build
 # set_my_commands, /start, and /help consistently.
@@ -53,8 +102,14 @@ def create_router(
     vacancy_users: frozenset[int] = frozenset(),
     *,
     discovery_mode: bool = False,
+    analytics: AnalyticsStore | None = None,
 ) -> Router:
     router = Router()
+
+    if analytics is not None:
+        analytics_middleware = AnalyticsMiddleware(analytics)
+        router.message.middleware(analytics_middleware)
+        router.callback_query.middleware(analytics_middleware)
 
     def is_owner(user_id: int | None) -> bool:
         return user_id is not None and user_id in owner_users
@@ -358,6 +413,8 @@ async def run() -> None:
     database = Database(settings.database_path)
     database.initialize()
     registry = Registry(database, settings.timezone)
+    analytics = AnalyticsStore(settings.analytics_database_path)
+    analytics.initialize()
     service = KonturService(
         database,
         settings.telegram_allowed_user_ids,
@@ -377,6 +434,7 @@ async def run() -> None:
             settings.telegram_allowed_user_ids,
             settings.telegram_vacancy_user_ids,
             discovery_mode=settings.telegram_discovery_mode,
+            analytics=analytics,
         )
     )
     await bot.set_my_commands(

@@ -77,6 +77,7 @@ class Settings:
     n8n_url: str = "http://127.0.0.1:5678"
     reputation_repositories: tuple[Path, ...] = ()
     reputation_git_authors: tuple[str, ...] = ()
+    analytics_database_path: Path = Path("./runtime/kontur_analytics.sqlite")
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -143,4 +144,10 @@ class Settings:
             reputation_git_authors=_parse_csv(
                 os.getenv("KONTUR_REPUTATION_GIT_AUTHORS", "")
             ),
+            analytics_database_path=Path(
+                os.getenv(
+                    "KONTUR_ANALYTICS_DATABASE_PATH",
+                    "./runtime/kontur_analytics.sqlite",
+                )
+            ).expanduser(),
         )
