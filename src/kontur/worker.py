@@ -11,6 +11,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
+from kontur.analytics import AnalyticsStore
 from kontur.config import Settings
 from kontur.db import Database
 from kontur.formatting import format_event
@@ -32,6 +33,7 @@ class DeliveryWorker:
         night_agent_outbox: Path | None = None,
         artifact_allowed_roots: tuple[Path, ...] = (),
         artifact_max_bytes: int = 10 * 1024 * 1024,
+        analytics: AnalyticsStore | None = None,
     ) -> None:
         self.database = database
         self.bot = bot
@@ -39,6 +41,7 @@ class DeliveryWorker:
         self.night_agent_outbox = night_agent_outbox
         self.artifact_allowed_roots = tuple(root.resolve() for root in artifact_allowed_roots)
         self.artifact_max_bytes = artifact_max_bytes
+        self.analytics = analytics
 
     async def deliver_once(self) -> int:
         self.import_night_agent_outbox()
@@ -77,6 +80,7 @@ class DeliveryWorker:
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=self._keyboard_rows(event)
         )
+        attempt = int(delivery["attempts"]) + 1
         try:
             message = await self.bot.send_message(
                 chat_id=int(delivery["recipient"]),
@@ -88,6 +92,14 @@ class DeliveryWorker:
         except Exception as error:
             LOGGER.warning("telegram delivery failed: %s", type(error).__name__)
             self._schedule_retry(delivery, type(error).__name__)
+            if self.analytics is not None:
+                self.analytics.record_delivery(
+                    event_type=event.type,
+                    recipient=str(delivery["recipient"]),
+                    attempt=attempt,
+                    ok=False,
+                    error=type(error).__name__,
+                )
             return
 
         now = datetime.now(UTC).isoformat()
@@ -107,6 +119,13 @@ class DeliveryWorker:
                 WHERE id = ? AND status IN ('new', 'delivery_failed')
                 """,
                 (now, event.id),
+            )
+        if self.analytics is not None:
+            self.analytics.record_delivery(
+                event_type=event.type,
+                recipient=str(delivery["recipient"]),
+                attempt=attempt,
+                ok=True,
             )
 
     def _schedule_retry(self, delivery: sqlite3.Row, safe_error: str) -> None:
@@ -249,6 +268,8 @@ async def run() -> None:
         raise RuntimeError("KONTUR_TELEGRAM_BOT_TOKEN is required")
     database = Database(settings.database_path)
     database.initialize()
+    analytics = AnalyticsStore(settings.analytics_database_path)
+    analytics.initialize()
     session = (
         AiohttpSession(proxy=settings.telegram_proxy_url)
         if settings.telegram_proxy_url
@@ -262,6 +283,7 @@ async def run() -> None:
         night_agent_outbox=settings.night_agent_outbox,
         artifact_allowed_roots=settings.artifact_allowed_roots,
         artifact_max_bytes=settings.artifact_max_bytes,
+        analytics=analytics,
     )
     service = KonturService(
         database,
