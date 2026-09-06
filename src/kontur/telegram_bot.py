@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -282,7 +283,12 @@ async def run() -> None:
         timezone=settings.timezone,
         vacancy_recipients=settings.telegram_vacancy_user_ids,
     )
-    bot = Bot(settings.telegram_bot_token)
+    session = (
+        AiohttpSession(proxy=settings.telegram_proxy_url)
+        if settings.telegram_proxy_url
+        else None
+    )
+    bot = Bot(settings.telegram_bot_token, session=session)
     dispatcher = Dispatcher()
     dispatcher.include_router(
         create_router(

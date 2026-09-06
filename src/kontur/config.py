@@ -67,6 +67,7 @@ class Settings:
     night_agent_outbox: Path
     artifact_allowed_roots: tuple[Path, ...]
     artifact_max_bytes: int
+    telegram_proxy_url: str = ""
     hh_search_text: str = "Go OR Golang"
     hh_area: str = "113"
     hh_user_agent: str = "personal-kontur/0.1 (personal vacancy monitor)"
@@ -98,6 +99,7 @@ class Settings:
             telegram_discovery_mode=_parse_bool(
                 os.getenv("KONTUR_TELEGRAM_DISCOVERY_MODE", "false")
             ),
+            telegram_proxy_url=os.getenv("KONTUR_TELEGRAM_PROXY_URL", ""),
             timezone=os.getenv("KONTUR_TIMEZONE", "Europe/Moscow"),
             log_level=os.getenv("KONTUR_LOG_LEVEL", "INFO"),
             poll_interval_seconds=float(os.getenv("KONTUR_POLL_INTERVAL_SECONDS", "5")),

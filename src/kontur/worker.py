@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -248,7 +249,12 @@ async def run() -> None:
         raise RuntimeError("KONTUR_TELEGRAM_BOT_TOKEN is required")
     database = Database(settings.database_path)
     database.initialize()
-    bot = Bot(settings.telegram_bot_token)
+    session = (
+        AiohttpSession(proxy=settings.telegram_proxy_url)
+        if settings.telegram_proxy_url
+        else None
+    )
+    bot = Bot(settings.telegram_bot_token, session=session)
     worker = DeliveryWorker(
         database,
         bot,
