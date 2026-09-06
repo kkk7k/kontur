@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, Message
 
 from kontur.config import Settings
 from kontur.db import Database
-from kontur.formatting import format_event
+from kontur.formatting import format_event_list
 from kontur.models import EventStatus
 from kontur.registry import Registry
 from kontur.service import KonturService
@@ -115,8 +115,8 @@ def create_router(
         if not events:
             await message.answer("Событий нет.")
             return
-        for event in events:
-            await message.answer(format_event(event), parse_mode=ParseMode.HTML)
+        text = format_event_list(events, header="Последние события:", timezone=service.timezone)
+        await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("today"))
     async def today(message: Message) -> None:
@@ -138,8 +138,8 @@ def create_router(
         if not events:
             await message.answer("Ошибок нет.")
             return
-        for event in events:
-            await message.answer(format_event(event), parse_mode=ParseMode.HTML)
+        text = format_event_list(events, header="Последние ошибки:", timezone=service.timezone)
+        await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("inbox"))
     async def inbox(message: Message) -> None:
@@ -160,8 +160,8 @@ def create_router(
         if not events:
             await message.answer("Inbox пуст.")
             return
-        for event in events:
-            await message.answer(format_event(event), parse_mode=ParseMode.HTML)
+        text = format_event_list(events, header="Inbox:", timezone=service.timezone)
+        await message.answer(text, parse_mode=ParseMode.HTML)
 
     @router.message(Command("status"))
     async def status_command(message: Message) -> None:

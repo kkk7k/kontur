@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from zoneinfo import ZoneInfo
 
 from kontur.models import EventView
 
@@ -11,6 +12,21 @@ SEVERITY_ICON = {
     "error": "❌",
     "critical": "🚨",
 }
+
+
+def format_event_line(event: EventView, *, timezone: str = "UTC") -> str:
+    icon = SEVERITY_ICON[event.severity.value]
+    local_time = event.occurred_at.astimezone(ZoneInfo(timezone))
+    time_label = local_time.strftime("%d.%m %H:%M")
+    return f"{icon} {time_label} — {escape(event.title)} (<code>{escape(event.id)}</code>)"
+
+
+def format_event_list(
+    events: list[EventView], *, header: str, timezone: str = "UTC"
+) -> str:
+    lines = [header, ""]
+    lines.extend(format_event_line(event, timezone=timezone) for event in events)
+    return "\n".join(lines)
 
 
 def format_event(event: EventView) -> str:
