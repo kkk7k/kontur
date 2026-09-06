@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
+from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -82,6 +84,7 @@ def create_router(
             "/agents — реестр агентов\n"
             "/automations — автоматизации и расписания\n"
             "/status — состояние системы\n"
+            "/stats — температура/RAM/диск хостов\n"
             "/whoami — показать Telegram ID\n"
             "/help — все команды"
         )
@@ -106,7 +109,8 @@ def create_router(
             "/agents — агенты и последние запуски\n"
             "/automations — состояние и расписания\n"
             "/whoami — показать Telegram ID\n"
-            "/status — здоровье Контур Core"
+            "/status — здоровье Контур Core\n"
+            "/stats — температура/RAM/диск хостов"
         )
 
     async def send_events(message: Message, *, event_type: str | None = None) -> None:
@@ -183,6 +187,40 @@ def create_router(
             f"Pending inbox: {state.pending_inbox}\n"
             f"Failed deliveries: {state.failed_deliveries}"
         )
+
+    @router.message(Command("stats"))
+    async def stats_command(message: Message) -> None:
+        if not is_owner(message.from_user.id if message.from_user else None):
+            return
+        events = service.events(event_type="host_metric_reported", limit=50).items
+        latest_by_host: dict[str, object] = {}
+        for event in events:
+            latest_by_host.setdefault(event.producer, event)
+        if not latest_by_host:
+            await message.answer("Метрик хостов пока нет.")
+            return
+        lines = ["<b>Хосты</b>"]
+        for producer, event in latest_by_host.items():
+            host = producer.removeprefix("host-")
+            payload = event.payload
+            age_minutes = int(
+                (
+                    datetime.now(event.occurred_at.tzinfo) - event.occurred_at
+                ).total_seconds()
+                // 60
+            )
+            temp = (
+                f"{payload['temp_avg']}°C (min {payload['temp_min']} / max {payload['temp_max']})"
+                if "temp_avg" in payload
+                else "н/д"
+            )
+            lines.append(
+                f"\n🖥 <b>{escape(host)}</b> (отчёт {age_minutes} мин назад)\n"
+                f"CPU: {temp}\n"
+                f"RAM: {payload.get('ram_used_gb', '?')}G/{payload.get('ram_total_gb', '?')}G\n"
+                f"Disk: {payload.get('disk_used_pct', '?')}%"
+            )
+        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
     def display_time(value) -> str:
         if value is None:
@@ -317,6 +355,7 @@ async def run() -> None:
             BotCommand(command="agents", description="Реестр агентов"),
             BotCommand(command="automations", description="Автоматизации"),
             BotCommand(command="status", description="Состояние Контура"),
+            BotCommand(command="stats", description="Температура/RAM/диск хостов"),
             BotCommand(command="whoami", description="Мой Telegram ID"),
             BotCommand(command="help", description="Все команды"),
         ]
