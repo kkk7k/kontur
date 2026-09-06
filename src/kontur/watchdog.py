@@ -16,6 +16,7 @@ class Watchdog:
     registry: Registry
     service: KonturService
     n8n_url: str = "http://127.0.0.1:5678"
+    flap_threshold: int = 3
 
     def check(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
@@ -46,20 +47,37 @@ class Watchdog:
                 f"{automation.id}:{now.isoformat()}".encode()
             ).hexdigest()[:16]
             event_id = f"evt_watchdog_{suffix}"
-            if not self.registry.open_incident(automation.id, event_id, now):
+            flap_count = self.registry.open_incident(automation.id, event_id, now)
+            if flap_count is None:
                 continue
+            if flap_count > self.flap_threshold:
+                # Flap storm already announced once this window — suppress
+                # further spam until it quiets down or gets resolved.
+                continue
+            if flap_count == self.flap_threshold:
+                severity = Severity.CRITICAL
+                title = f"Частые сбои автоматизации: {automation.name}"
+                summary = (
+                    f"{flap_count} рестартов за "
+                    f"{int(self.registry.FLAP_WINDOW.total_seconds() // 60)} минут — "
+                    "похоже на флап, а не на разовый сбой."
+                )
+            else:
+                severity = Severity.ERROR
+                title = f"Сбой автоматизации: {automation.name}"
+                summary = (
+                    f"Heartbeat не получен дольше "
+                    f"{automation.stale_after_seconds} секунд."
+                )
             event = EventCreate(
                 id=event_id,
                 occurred_at=now,
                 producer="kontur-watchdog",
                 agent=None,
                 type="automation_failed",
-                severity=Severity.ERROR,
-                title=f"Сбой автоматизации: {automation.name}",
-                summary=(
-                    f"Heartbeat не получен дольше "
-                    f"{automation.stale_after_seconds} секунд."
-                ),
+                severity=severity,
+                title=title,
+                summary=summary,
                 requires_action=True,
                 recommended_action="Проверить сервис и его логи",
                 deduplication_key=f"watchdog:{automation.id}:{suffix}",

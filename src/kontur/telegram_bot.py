@@ -8,17 +8,43 @@ from html import escape
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.filters import Command
-from aiogram.types import BotCommand, CallbackQuery, Message
+from aiogram.filters import BaseFilter, Command
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from kontur.config import Settings
 from kontur.db import Database
 from kontur.formatting import format_event_list
-from kontur.models import EventStatus
+from kontur.models import EventStatus, EventView
 from kontur.registry import Registry
 from kontur.service import KonturService
 
 LOGGER = logging.getLogger(__name__)
+
+# Single source of truth for command name + description, used to build
+# set_my_commands, /start, and /help consistently.
+COMMANDS: list[tuple[str, str]] = [
+    ("today", "Последние события"),
+    ("inbox", "Требуют действия"),
+    ("runs", "Завершения запусков"),
+    ("errors", "Ошибки"),
+    ("digest", "Итог за сегодня"),
+    ("agents", "Агенты и последние запуски"),
+    ("automations", "Автоматизации и расписания"),
+    ("status", "Состояние Контур Core"),
+    ("stats", "Температура/RAM/диск хостов"),
+    ("whoami", "Мой Telegram ID"),
+    ("help", "Все команды"),
+]
+
+
+def _command_menu_text() -> str:
+    return "\n".join(f"/{command} — {description}" for command, description in COMMANDS)
 
 
 def create_router(
@@ -35,6 +61,12 @@ def create_router(
 
     def is_vacancy_user(user_id: int | None) -> bool:
         return user_id is not None and user_id in vacancy_users
+
+    class IsOwner(BaseFilter):
+        async def __call__(self, message: Message) -> bool:
+            return is_owner(message.from_user.id if message.from_user else None)
+
+    owner_only = IsOwner()
 
     @router.message(Command("whoami"))
     async def whoami(message: Message) -> None:
@@ -74,20 +106,7 @@ def create_router(
         if not is_owner(user_id):
             LOGGER.warning("telegram access denied")
             return
-        await message.answer(
-            "Контур подключён.\n\n"
-            "/today — последние события\n"
-            "/inbox — события, требующие действия\n"
-            "/runs — завершения запусков\n"
-            "/errors — ошибки\n"
-            "/digest — итог за текущий день\n"
-            "/agents — реестр агентов\n"
-            "/automations — автоматизации и расписания\n"
-            "/status — состояние системы\n"
-            "/stats — температура/RAM/диск хостов\n"
-            "/whoami — показать Telegram ID\n"
-            "/help — все команды"
-        )
+        await message.answer(f"Контур подключён.\n\n{_command_menu_text()}")
 
     @router.message(Command("help"))
     async def help_command(message: Message) -> None:
@@ -100,42 +119,31 @@ def create_router(
             return
         if not is_owner(user_id):
             return
-        await message.answer(
-            "/today — события за текущий список\n"
-            "/inbox — необработанные события\n"
-            "/runs — завершения запусков\n"
-            "/errors — ошибки\n"
-            "/digest — создать итог за текущий день\n"
-            "/agents — агенты и последние запуски\n"
-            "/automations — состояние и расписания\n"
-            "/whoami — показать Telegram ID\n"
-            "/status — здоровье Контур Core\n"
-            "/stats — температура/RAM/диск хостов"
-        )
+        await message.answer(_command_menu_text())
 
-    async def send_events(message: Message, *, event_type: str | None = None) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
+    async def send_events(
+        message: Message, *, event_type: str | None = None, header_text: str = "Последние события"
+    ) -> None:
         result = service.events(event_type=event_type, limit=10)
         if not result.items:
             await message.answer("Событий нет.")
             return
-        header = f"Последние события (показано {len(result.items)} из {result.total}):"
+        header = f"{header_text} (показано {len(result.items)} из {result.total}):"
         text = format_event_list(result.items, header=header, timezone=service.timezone)
         await message.answer(text, parse_mode=ParseMode.HTML)
 
-    @router.message(Command("today"))
+    @router.message(Command("today"), owner_only)
     async def today(message: Message) -> None:
         await send_events(message)
 
-    @router.message(Command("runs"))
+    @router.message(Command("runs"), owner_only)
     async def runs(message: Message) -> None:
-        await send_events(message, event_type="run_completed")
+        await send_events(
+            message, event_type="run_completed", header_text="Завершения запусков"
+        )
 
-    @router.message(Command("errors"))
+    @router.message(Command("errors"), owner_only)
     async def errors(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
         matching = [
             event
             for event in service.events(limit=50).items
@@ -152,10 +160,21 @@ def create_router(
         text = format_event_list(events, header=header, timezone=service.timezone)
         await message.answer(text, parse_mode=ParseMode.HTML)
 
-    @router.message(Command("inbox"))
+    def _resolve_keyboard(events: list[EventView]) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"✅ {event.title[:30]}",
+                        callback_data=f"resolve:{event.id}",
+                    )
+                ]
+                for event in events
+            ]
+        )
+
+    @router.message(Command("inbox"), owner_only)
     async def inbox(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
         matching = [
             event
             for event in service.events(limit=50).items
@@ -174,26 +193,26 @@ def create_router(
             return
         header = f"Inbox (показано {len(events)} из {len(matching)} за последние 50 событий):"
         text = format_event_list(events, header=header, timezone=service.timezone)
-        await message.answer(text, parse_mode=ParseMode.HTML)
-
-    @router.message(Command("status"))
-    async def status_command(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
-        state = service.status()
         await message.answer(
-            "Контур: OK\n"
-            f"Database: {state.database.upper()}\n"
-            f"Pending inbox: {state.pending_inbox}\n"
-            f"Failed deliveries: {state.failed_deliveries}"
+            text, parse_mode=ParseMode.HTML, reply_markup=_resolve_keyboard(events)
         )
 
-    @router.message(Command("stats"))
+    @router.message(Command("status"), owner_only)
+    async def status_command(message: Message) -> None:
+        state = service.status()
+        icon = "🟢" if state.failed_deliveries == 0 else "⚠️"
+        await message.answer(
+            f"{icon} <b>Контур</b>\n"
+            f"Database: {state.database.upper()}\n"
+            f"Pending inbox: {state.pending_inbox}\n"
+            f"Failed deliveries: {state.failed_deliveries}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    @router.message(Command("stats"), owner_only)
     async def stats_command(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
         events = service.events(event_type="host_metric_reported", limit=50).items
-        latest_by_host: dict[str, object] = {}
+        latest_by_host: dict[str, EventView] = {}
         for event in events:
             latest_by_host.setdefault(event.producer, event)
         if not latest_by_host:
@@ -235,10 +254,8 @@ def create_router(
             return "—"
         return value.astimezone().strftime("%d.%m %H:%M")
 
-    @router.message(Command("agents"))
+    @router.message(Command("agents"), owner_only)
     async def agents_command(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
         lines = ["<b>Агенты</b>"]
         for agent in service.agents():
             icon = {
@@ -254,10 +271,8 @@ def create_router(
             )
         await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
-    @router.message(Command("automations"))
+    @router.message(Command("automations"), owner_only)
     async def automations_command(message: Message) -> None:
-        if not is_owner(message.from_user.id if message.from_user else None):
-            return
         lines = ["<b>Автоматизации</b>"]
         for automation in service.automations():
             icon = {
@@ -276,11 +291,9 @@ def create_router(
             )
         await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
-    @router.message(Command("digest"))
+    @router.message(Command("digest"), owner_only)
     async def digest_command(message: Message) -> None:
         user_id = message.from_user.id if message.from_user else None
-        if not is_owner(user_id):
-            return
         event, created = service.create_daily_digest(producer=f"telegram-{user_id}")
         if event is None:
             await message.answer("За сегодня пока нет событий для digest.")
@@ -311,8 +324,21 @@ def create_router(
             await callback.answer("Событие не найдено", show_alert=True)
             return
         await callback.answer("Обработано")
-        if callback.message:
-            await callback.message.edit_reply_markup(reply_markup=None)
+        if callback.message and callback.message.reply_markup:
+            # Remove only the button that was pressed — a message can carry
+            # several rows (e.g. the /inbox list, or a vacancy's "open" +
+            # "resolve" pair), and clearing the whole markup would drop the
+            # others too.
+            remaining_rows = [
+                row
+                for row in callback.message.reply_markup.inline_keyboard
+                if not any(button.callback_data == callback.data for button in row)
+            ]
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=remaining_rows)
+                if remaining_rows
+                else None
+            )
 
     return router
 
@@ -354,19 +380,7 @@ async def run() -> None:
         )
     )
     await bot.set_my_commands(
-        [
-            BotCommand(command="today", description="Последние события"),
-            BotCommand(command="inbox", description="Требуют действия"),
-            BotCommand(command="runs", description="Завершения запусков"),
-            BotCommand(command="errors", description="Ошибки"),
-            BotCommand(command="digest", description="Итог за сегодня"),
-            BotCommand(command="agents", description="Реестр агентов"),
-            BotCommand(command="automations", description="Автоматизации"),
-            BotCommand(command="status", description="Состояние Контура"),
-            BotCommand(command="stats", description="Температура/RAM/диск хостов"),
-            BotCommand(command="whoami", description="Мой Telegram ID"),
-            BotCommand(command="help", description="Все команды"),
-        ]
+        [BotCommand(command=command, description=description) for command, description in COMMANDS]
     )
 
     async def heartbeat() -> None:

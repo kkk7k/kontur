@@ -56,6 +56,8 @@ class Registry:
     database: Database
     timezone: str = "Europe/Moscow"
 
+    FLAP_WINDOW = timedelta(minutes=5)
+
     def agents(self) -> list[AgentView]:
         with self.database.connection() as connection:
             rows = connection.execute("SELECT * FROM agents ORDER BY name").fetchall()
@@ -140,35 +142,57 @@ class Registry:
         target_id: str,
         event_id: str,
         at: datetime | None = None,
-    ) -> bool:
-        timestamp = (at or utc_now()).isoformat()
+    ) -> int | None:
+        """Open (or reopen) an incident for `target_id`.
+
+        Returns the flap count (incidents opened for this target within the
+        rolling FLAP_WINDOW, including this one) if a new incident was
+        opened, or None if an incident is already open and unresolved.
+        """
+        now = at or utc_now()
+        timestamp = now.isoformat()
         with self.database.connection() as connection:
             existing = connection.execute(
                 """
-                SELECT target_id FROM watchdog_incidents
-                WHERE target_id = ? AND resolved_at IS NULL
+                SELECT resolved_at, flap_count, flap_window_started_at
+                FROM watchdog_incidents WHERE target_id = ?
                 """,
                 (target_id,),
             ).fetchone()
-            if existing:
-                return False
+            if existing and existing["resolved_at"] is None:
+                return None
+            window_started_at = (
+                _dt(existing["flap_window_started_at"]) if existing else None
+            )
+            if (
+                existing
+                and window_started_at is not None
+                and now - window_started_at <= self.FLAP_WINDOW
+            ):
+                flap_count = existing["flap_count"] + 1
+            else:
+                flap_count = 1
+                window_started_at = now
             connection.execute(
                 """
                 INSERT INTO watchdog_incidents (
-                    target_id, opened_at, resolved_at, event_id
-                ) VALUES (?, ?, NULL, ?)
+                    target_id, opened_at, resolved_at, event_id,
+                    flap_count, flap_window_started_at
+                ) VALUES (?, ?, NULL, ?, ?, ?)
                 ON CONFLICT(target_id) DO UPDATE SET
                     opened_at = excluded.opened_at,
                     resolved_at = NULL,
-                    event_id = excluded.event_id
+                    event_id = excluded.event_id,
+                    flap_count = excluded.flap_count,
+                    flap_window_started_at = excluded.flap_window_started_at
                 """,
-                (target_id, timestamp, event_id),
+                (target_id, timestamp, event_id, flap_count, window_started_at.isoformat()),
             )
             connection.execute(
                 "UPDATE automations SET status = 'stale', updated_at = ? WHERE id = ?",
                 (timestamp, target_id),
             )
-            return True
+            return flap_count
 
     def close_recovered_incidents(
         self,

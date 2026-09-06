@@ -132,7 +132,9 @@ CREATE TABLE IF NOT EXISTS watchdog_incidents (
     target_id TEXT PRIMARY KEY REFERENCES automations(id),
     opened_at TEXT NOT NULL,
     resolved_at TEXT,
-    event_id TEXT NOT NULL
+    event_id TEXT NOT NULL,
+    flap_count INTEGER NOT NULL DEFAULT 1,
+    flap_window_started_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS reputation_checkpoints (
@@ -177,8 +179,21 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             connection.executescript(SCHEMA)
+            self._migrate(connection)
             self._seed_registry(connection)
             self._backfill_registry(connection)
+
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        for statement in (
+            "ALTER TABLE watchdog_incidents ADD COLUMN flap_count "
+            "INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE watchdog_incidents ADD COLUMN flap_window_started_at TEXT",
+        ):
+            try:
+                connection.execute(statement)
+            except sqlite3.OperationalError as error:
+                if "duplicate column" not in str(error):
+                    raise
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
