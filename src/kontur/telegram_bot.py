@@ -214,11 +214,19 @@ def create_router(
                 if "temp_avg" in payload
                 else "н/д"
             )
+            uptime_seconds = payload.get("uptime_seconds")
+            if uptime_seconds is not None:
+                hours, minutes = divmod(int(uptime_seconds) // 60, 60)
+                uptime = f"{hours}:{minutes:02d}"
+            else:
+                uptime = "?"
             lines.append(
                 f"\n🖥 <b>{escape(host)}</b> (отчёт {age_minutes} мин назад)\n"
                 f"CPU: {temp}\n"
                 f"RAM: {payload.get('ram_used_gb', '?')}G/{payload.get('ram_total_gb', '?')}G\n"
-                f"Disk: {payload.get('disk_used_pct', '?')}%"
+                f"Swap: {payload.get('swap_used_mb', '?')}MB\n"
+                f"Disk: {payload.get('disk_used_pct', '?')}%\n"
+                f"Uptime: {uptime}"
             )
         await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
