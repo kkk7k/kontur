@@ -63,6 +63,52 @@ def test_api_auth_and_idempotency(tmp_path: Path) -> None:
         assert len(client.get("/api/v1/automations").json()) == 9
 
 
+def test_heartbeat_updates_known_service(tmp_path: Path) -> None:
+    custom_settings = settings(tmp_path)
+    custom_settings.api_keys["night-agent-nightly"] = "nightly-secret"
+    with TestClient(create_app(custom_settings)) as client:
+        response = client.post(
+            "/api/v1/automations/night-agent-nightly/heartbeat",
+            headers={
+                "X-Kontur-Producer": "night-agent-nightly",
+                "X-Kontur-API-Key": "nightly-secret",
+            },
+        )
+    assert response.status_code == 404  # not a service-kind automation
+
+
+def test_heartbeat_rejects_producer_for_other_id(tmp_path: Path) -> None:
+    custom_settings = settings(tmp_path)
+    custom_settings.api_keys["ration-bot"] = "ration-secret"
+    with TestClient(create_app(custom_settings)) as client:
+        response = client.post(
+            "/api/v1/automations/ration-bot/heartbeat",
+            headers={
+                "X-Kontur-Producer": "night-agent",
+                "X-Kontur-API-Key": "test-secret",
+            },
+        )
+    assert response.status_code == 403
+
+
+def test_heartbeat_accepts_matching_producer(tmp_path: Path) -> None:
+    custom_settings = settings(tmp_path)
+    custom_settings.api_keys["ration-bot"] = "ration-secret"
+    with TestClient(create_app(custom_settings)) as client:
+        response = client.post(
+            "/api/v1/automations/ration-bot/heartbeat",
+            headers={
+                "X-Kontur-Producer": "ration-bot",
+                "X-Kontur-API-Key": "ration-secret",
+            },
+        )
+        assert response.status_code == 204
+        automations = client.get("/api/v1/automations").json()
+    ration = next(a for a in automations if a["id"] == "ration-bot")
+    assert ration["last_heartbeat_at"] is not None
+    assert ration["status"] == "healthy"
+
+
 def test_api_rejects_producer_mismatch(tmp_path: Path) -> None:
     body = payload()
     body["producer"] = "other"
